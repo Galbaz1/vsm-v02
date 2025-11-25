@@ -1,172 +1,399 @@
 """
-Agent service for orchestrating retrieval methods and generating responses.
+Agent service - Elysia-style decision tree orchestrator.
 
-The agent uses Qwen2.5-VL (or similar) to:
-1. Analyze user queries
-2. Decide which retrieval method(s) to use
-3. Interpret visual results from ColQwen
-4. Stream progressive responses
+Refactored from rule-based routing to use Elysia patterns:
+- Environment for centralized state
+- Tools with availability control
+- Decision tree traversal
+- Self-healing error handling
+
+Original Elysia: https://github.com/weaviate/elysia
 """
 
-import os
-import json
-from typing import Optional, List, Dict, Any, AsyncGenerator
-from dataclasses import dataclass
 import asyncio
+import time
+import uuid
+from typing import Any, AsyncGenerator, Dict, List, Optional, TYPE_CHECKING
 
-@dataclass
-class SearchDecision:
-    """Agent's decision on which search methods to use"""
-    use_fast_vector: bool
-    use_colqwen: bool
-    strategy: str  # "fast_only", "colqwen_only", "fast_then_colqwen", "both_parallel"
-    reasoning: str
+from api.services.environment import Environment, TreeData
+from api.services.tools import (
+    Tool,
+    FastVectorSearchTool,
+    ColQwenSearchTool,
+    HybridSearchTool,
+    TextResponseTool,
+    SummarizeTool,
+)
+from api.schemas.agent import (
+    Result,
+    Error,
+    Response,
+    Status,
+    Decision,
+    Complete,
+    ToolOutput,
+)
+
 
 class AgentOrchestrator:
     """
-    Orchestrates retrieval methods based on query analysis.
+    Elysia-style agent orchestrator for VSM dual-pipeline RAG.
     
-    Uses a reasoning model to decide which search method(s) to use
-    and interprets results with visual understanding.
+    Features:
+    - Decision tree with tool availability control
+    - Centralized Environment for state management
+    - Self-healing error handling
+    - Progressive response streaming
+    
+    Example:
+        agent = get_agent()
+        async for output in agent.run("Show me the wiring diagram"):
+            if output["type"] == "result":
+                print(f"Found {len(output['payload']['objects'])} results")
+            elif output["type"] == "response":
+                print(output["payload"]["text"])
     """
     
-    def __init__(self, model_path: Optional[str] = None):
+    def __init__(
+        self,
+        max_iterations: int = 10,
+        collection_names: Optional[List[str]] = None,
+    ):
         """
-        Initialize agent with Qwen2.5-VL or compatible model.
+        Initialize the agent orchestrator.
         
         Args:
-            model_path: Path to local model or model identifier
+            max_iterations: Maximum decision tree iterations before forced stop
+            collection_names: Available Weaviate collections
         """
-        self.model_path = model_path or "qwen/qwen2.5-vl-7b-instruct"
-        self.model = None  # Loaded on demand
-        self.tools = self._define_tools()
+        self.max_iterations = max_iterations
+        self.collection_names = collection_names or ["AssetManual", "PDFDocuments"]
+        
+        # Initialize tools
+        self.tools: Dict[str, Tool] = {}
+        self._register_default_tools()
     
-    def _define_tools(self) -> List[Dict[str, Any]]:
-        """Define available tools for the agent."""
-        return [
-            {
-                "name": "fast_vector_search",
-                "description": (
-                    "Quick semantic search over manual content using Ollama embeddings. "
-                    "Use for: factual queries, keyword-heavy questions, when speed is critical. "
-                    "Returns in ~0.5-1s."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Search query"},
-                        "limit": {"type": "integer", "description": "Max results", "default": 5},
-                        "chunk_type": {"type": "string", "description": "Filter by chunk type (optional)"}
-                    },
-                    "required": ["query"]
-                }
-            },
-            {
-                "name": "colqwen_late_interaction",
-                "description": (
-                    "Deep visual-semantic search using ColQwen2.5 multi-vector embeddings. "
-                    "Use for: diagram questions, visual troubleshooting, complex spatial queries. "
-                    "SLOWER (~3-5s) but more accurate for visual content."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Search query"},
-                        "top_k": {"type": "integer", "description": "Max results", "default": 3}
-                    },
-                    "required": ["query"]
-                }
-            }
+    def _register_default_tools(self) -> None:
+        """Register the default tool set."""
+        tools = [
+            FastVectorSearchTool(),
+            ColQwenSearchTool(),
+            HybridSearchTool(),
+            TextResponseTool(),
+            SummarizeTool(),
         ]
+        for tool in tools:
+            self.tools[tool.name] = tool
     
-    async def analyze_query(self, query: str, user_history: Optional[List] = None) -> SearchDecision:
+    def add_tool(self, tool: Tool) -> None:
+        """Add a custom tool to the agent."""
+        self.tools[tool.name] = tool
+    
+    def remove_tool(self, tool_name: str) -> None:
+        """Remove a tool from the agent."""
+        if tool_name in self.tools:
+            del self.tools[tool_name]
+    
+    async def _get_available_tools(
+        self,
+        tree_data: TreeData,
+    ) -> List[Tool]:
+        """Get tools that are currently available based on state."""
+        available = []
+        for tool in self.tools.values():
+            if await tool.is_tool_available(tree_data):
+                available.append(tool)
+        return available
+    
+    async def _check_auto_triggers(
+        self,
+        tree_data: TreeData,
+    ) -> List[tuple[Tool, Dict[str, Any]]]:
+        """Check which tools should auto-trigger."""
+        triggers = []
+        for tool in self.tools.values():
+            should_run, inputs = await tool.run_if_true(tree_data)
+            if should_run:
+                triggers.append((tool, inputs))
+        return triggers
+    
+    async def _make_decision(
+        self,
+        tree_data: TreeData,
+        available_tools: List[Tool],
+    ) -> Decision:
         """
-        Analyze user query and decide which retrieval method(s) to use.
+        Decide which tool to use based on query and state.
         
-        Args:
-            query: User's search query
-            user_history: Previous queries/results for context
-        
-        Returns:
-            SearchDecision with strategy and reasoning
+        Currently rule-based, will be upgraded to LLM-based.
+        TODO: Replace with Qwen3 with thinking mode for intelligent routing.
         """
-        # For now, implement rule-based logic
-        # TODO: Replace with actual LLM-based decision making
+        query = tree_data.user_prompt.lower()
         
-        # Keywords indicating visual content
-        visual_keywords = ["diagram", "image", "picture", "schematic", "wiring", "figure", "show me"]
+        # Visual indicators
+        visual_keywords = [
+            "diagram", "figure", "schematic", "wiring", "circuit",
+            "chart", "graph", "image", "picture", "show me", "visual"
+        ]
         
-        # Keywords indicating simple factual queries
-        simple_keywords = ["what is", "define", "voltage", "temperature", "model number"]
+        # Simple factual indicators
+        factual_keywords = [
+            "what is", "define", "how much", "voltage", "temperature",
+            "specification", "model number", "dimension"
+        ]
         
-        query_lower = query.lower()
-        
-        # Check for visual indicators
-        is_visual = any(kw in query_lower for kw in visual_keywords)
-        
-        # Check for simple factual
-        is_simple = any(kw in query_lower for kw in simple_keywords) and len(query.split()) < 10
-        
-        if is_visual:
-            return SearchDecision(
-                use_fast_vector=False,
-                use_colqwen=True,
-                strategy="colqwen_only",
-                reasoning="Query asks for visual content - using ColQwen for accurate visual grounding"
+        # Check for explicit end request
+        end_keywords = ["thank", "done", "finished", "that's all"]
+        if any(kw in query for kw in end_keywords):
+            return Decision(
+                tool_name="text_response",
+                inputs={},
+                reasoning="User indicated they are done",
+                should_end=True,
             )
-        elif is_simple:
-            return SearchDecision(
-                use_fast_vector=True,
-                use_colqwen=False,
-                strategy="fast_only",
-                reasoning="Simple factual query - fast vector search is sufficient"
+        
+        # Check if we already have enough data
+        if not tree_data.environment.is_empty():
+            # If we have data, prefer to respond
+            if tree_data.num_iterations > 0:
+                return Decision(
+                    tool_name="text_response",
+                    inputs={"include_sources": True},
+                    reasoning="Already have retrieved data, generating response",
+                    should_end=True,
+                )
+        
+        # Route based on query type
+        is_visual = any(kw in query for kw in visual_keywords)
+        is_factual = any(kw in query for kw in factual_keywords)
+        
+        # Check tool availability
+        has_fast = any(t.name == "fast_vector_search" for t in available_tools)
+        has_colqwen = any(t.name == "colqwen_search" for t in available_tools)
+        has_hybrid = any(t.name == "hybrid_search" for t in available_tools)
+        
+        if is_visual and has_colqwen:
+            return Decision(
+                tool_name="colqwen_search",
+                inputs={"query": tree_data.user_prompt, "top_k": 3},
+                reasoning="Query asks for visual content - using ColQwen for visual grounding",
+            )
+        elif is_factual and has_fast:
+            return Decision(
+                tool_name="fast_vector_search",
+                inputs={"query": tree_data.user_prompt, "limit": 5},
+                reasoning="Simple factual query - fast vector search is sufficient",
+            )
+        elif has_hybrid:
+            return Decision(
+                tool_name="hybrid_search",
+                inputs={
+                    "query": tree_data.user_prompt,
+                    "text_limit": 3,
+                    "visual_limit": 2,
+                },
+                reasoning="Complex query - using hybrid search for comprehensive results",
+            )
+        elif has_fast:
+            return Decision(
+                tool_name="fast_vector_search",
+                inputs={"query": tree_data.user_prompt, "limit": 5},
+                reasoning="Defaulting to fast vector search",
             )
         else:
-            # Complex query - use fast first, then optionally ColQwen
-            return SearchDecision(
-                use_fast_vector=True,
-                use_colqwen=True,
-                strategy="fast_then_colqwen",
-                reasoning="Complex query - showing fast results first, then enriching with visual context"
+            return Decision(
+                tool_name="text_response",
+                inputs={},
+                reasoning="No search tools available, providing direct response",
+                should_end=True,
+                impossible=True,
             )
     
-    async def stream_response(
+    async def _execute_tool(
         self,
-        query: str,
-        fast_results: Optional[List] = None,
-        colqwen_results: Optional[List] = None
+        tool: Tool,
+        tree_data: TreeData,
+        inputs: Dict[str, Any],
+        query_id: str,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Execute a tool and handle its outputs."""
+        start_time = time.time()
+        successful = True
+        
+        try:
+            async for output in tool(tree_data, inputs):
+                if output is None:
+                    continue
+                
+                if isinstance(output, Result):
+                    # Add to environment
+                    tree_data.environment.add(tool.name, output)
+                    yield output.to_frontend(query_id)
+                
+                elif isinstance(output, Error):
+                    # Add error for self-healing
+                    tree_data.add_error(output.message)
+                    successful = False
+                    yield output.to_frontend(query_id)
+                
+                elif isinstance(output, (Response, Status)):
+                    yield output.to_frontend(query_id)
+                
+        except Exception as e:
+            tree_data.add_error(str(e))
+            yield Error(
+                message=str(e),
+                recoverable=False,
+            ).to_frontend(query_id)
+            successful = False
+        
+        # Record task completion
+        elapsed_ms = (time.time() - start_time) * 1000
+        tree_data.record_task(tool.name, elapsed_ms)
+        
+        # Clear errors if successful
+        if successful:
+            tree_data.clear_errors()
+    
+    async def run(
+        self,
+        user_prompt: str,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+        query_id: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
-        Stream progressive response based on available results.
+        Run the agent decision tree.
+        
+        Args:
+            user_prompt: User's query
+            conversation_history: Previous conversation for context
+            query_id: Unique ID for this query
         
         Yields:
-            Chunks of response in format: {"type": "token", "content": "..."}
+            Stream of outputs (Result, Error, Response, Status, Decision, Complete)
         """
-        # TODO: Implement actual streaming with Qwen2.5-VL
-        # For now, return a mock response
+        query_id = query_id or str(uuid.uuid4())
         
-        if fast_results:
-            yield {"type": "metadata", "content": {"source": "fast_vector", "count": len(fast_results)}}
-            
-            response = f"Based on the manual, "
-            for char in response:
-                yield {"type": "token", "content": char}
-                await asyncio.sleep(0.01)  # Simulate streaming
+        # Initialize TreeData
+        tree_data = TreeData(
+            user_prompt=user_prompt,
+            environment=Environment(),
+            conversation_history=conversation_history or [],
+            collection_names=self.collection_names,
+            max_iterations=self.max_iterations,
+        )
         
-        if colqwen_results:
-            yield {"type": "metadata", "content": {"source": "colqwen", "count": len(colqwen_results)}}
+        # Add user message to history
+        tree_data.add_conversation_message("user", user_prompt)
+        
+        # Main decision loop
+        while tree_data.num_iterations < tree_data.max_iterations:
+            tree_data.num_iterations += 1
             
-            refinement = f"\n\nThe diagram on page {colqwen_results[0].get('page_number', 'unknown')} shows additional details."
-            for char in refinement:
-                yield {"type": "token", "content": char}
-                await asyncio.sleep(0.01)
+            # Get available tools
+            available_tools = await self._get_available_tools(tree_data)
+            
+            if not available_tools:
+                yield Error(
+                    message="No tools available",
+                    recoverable=False,
+                ).to_frontend(query_id)
+                break
+            
+            # Check for auto-triggers
+            auto_triggers = await self._check_auto_triggers(tree_data)
+            for tool, inputs in auto_triggers:
+                yield Status(f"Auto-triggered: {tool.name}").to_frontend(query_id)
+                async for output in self._execute_tool(tool, tree_data, inputs, query_id):
+                    if output:
+                        yield output
+            
+            # Make decision
+            decision = await self._make_decision(tree_data, available_tools)
+            
+            # Yield decision for transparency
+            yield decision.to_frontend(query_id)
+            
+            # Check for impossible task
+            if decision.impossible:
+                yield Response(
+                    text="I cannot complete this task with the available tools.",
+                ).to_frontend(query_id)
+                break
+            
+            # Execute chosen tool
+            if decision.tool_name in self.tools:
+                tool = self.tools[decision.tool_name]
+                yield Status(tool.status).to_frontend(query_id)
+                
+                async for output in self._execute_tool(
+                    tool, tree_data, decision.inputs, query_id
+                ):
+                    if output:
+                        yield output
+            
+            # Check if we should end
+            if decision.should_end:
+                break
+        
+        # Yield completion signal
+        yield Complete().to_frontend(query_id)
+    
+    # Legacy compatibility methods
+    async def analyze_query(self, query: str, user_history: Optional[List] = None):
+        """Legacy method for backward compatibility."""
+        tree_data = TreeData(
+            user_prompt=query,
+            conversation_history=user_history or [],
+            collection_names=self.collection_names,
+        )
+        
+        available_tools = await self._get_available_tools(tree_data)
+        decision = await self._make_decision(tree_data, available_tools)
+        
+        # Convert to legacy SearchDecision format
+        from dataclasses import dataclass
+        
+        @dataclass
+        class SearchDecision:
+            use_fast_vector: bool
+            use_colqwen: bool
+            strategy: str
+            reasoning: str
+        
+        use_fast = decision.tool_name in ["fast_vector_search", "hybrid_search"]
+        use_colqwen = decision.tool_name in ["colqwen_search", "hybrid_search"]
+        
+        if decision.tool_name == "fast_vector_search":
+            strategy = "fast_only"
+        elif decision.tool_name == "colqwen_search":
+            strategy = "colqwen_only"
+        elif decision.tool_name == "hybrid_search":
+            strategy = "fast_then_colqwen"
+        else:
+            strategy = "fast_only"
+        
+        return SearchDecision(
+            use_fast_vector=use_fast,
+            use_colqwen=use_colqwen,
+            strategy=strategy,
+            reasoning=decision.reasoning,
+        )
+
 
 # Singleton instance
-_agent = None
+_agent: Optional[AgentOrchestrator] = None
+
 
 def get_agent() -> AgentOrchestrator:
-    """Get or create agent orchestrator instance"""
+    """Get or create agent orchestrator instance."""
     global _agent
     if _agent is None:
         _agent = AgentOrchestrator()
     return _agent
+
+
+def reset_agent() -> None:
+    """Reset the agent instance (useful for testing)."""
+    global _agent
+    _agent = None
