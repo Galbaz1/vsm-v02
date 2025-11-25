@@ -177,12 +177,12 @@ def load_chunks_from_json(json_path: str):
 def ensure_collection(client: weaviate.WeaviateClient):
     """
     Ensure the AssetManual collection exists with appropriate schema.
-    Deletes and recreates if it already exists to ensure schema is up-to-date.
+    Creates collection only if it doesn't exist (preserves existing data).
     """
     existing = client.collections.list_all()
     if COLLECTION_NAME in existing:
-        print(f"[Weaviate] Deleting existing collection {COLLECTION_NAME}...")
-        client.collections.delete(COLLECTION_NAME)
+        print(f"[Weaviate] Collection {COLLECTION_NAME} already exists, using it...")
+        return client.collections.get(COLLECTION_NAME)
 
     print(f"[Weaviate] Creating collection {COLLECTION_NAME}...")
     coll = client.collections.create(

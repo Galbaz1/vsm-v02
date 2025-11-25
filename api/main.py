@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from api.core.config import get_settings
-from api.endpoints import health, search
+from api.endpoints import health, search, agentic
 
 app = FastAPI(
     title="Manual Search API",
@@ -31,3 +31,4 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 # Include routers
 app.include_router(health.router)
 app.include_router(search.router)
+app.include_router(agentic.router, tags=["agentic"])

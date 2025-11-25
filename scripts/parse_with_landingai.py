@@ -94,8 +94,8 @@ def main():
         print("Usage: python parse_with_landingai.py data/uk_firmware.pdf output_landingai.json")
         sys.exit(1)
 
-    # Load environment variables from .env file
-    env_path = Path(__file__).parent / ".env"
+    # Load environment variables from .env file in project root
+    env_path = Path(__file__).parent.parent / ".env"
     load_dotenv(env_path)
 
     pdf_path = sys.argv[1]

@@ -1,0 +1,27 @@
+# Core dependencies
+fastapi
+uvicorn[standard]
+pydantic
+
+# Vector database
+weaviate-client
+
+# Document parsing
+python-dotenv
+PyPDF2
+pdf2image
+Pillow
+
+# M3-Optimized ML Stack (Apple Silicon)
+torch==2.5.1  # Pinned! 2.6.0 has MPS bugs
+transformers>=4.45.0
+colpali-engine>=0.3.0
+qwen-vl-utils
+
+# Apple Silicon Optimizations
+mlx>=0.18.0  # For future native MLX support
+accelerate  # Automatic device mapping
+
+# API utilities
+python-multipart
+requests
