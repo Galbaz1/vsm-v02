@@ -1,0 +1,38 @@
+services:
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.34.0
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --scheme
+      - http
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    environment:
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
+      DEFAULT_VECTORIZER_MODULE: "text2vec-ollama"
+      ENABLE_MODULES: "text2vec-ollama,generative-ollama,bm25"
+      CLUSTER_HOSTNAME: "node1"
+      # This is how Weaviate's Ollama modules reach the Ollama container
+      OLLAMA_API_ENDPOINT: "http://ollama:11434"
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    depends_on:
+      - ollama
+    restart: on-failure
+
+  ollama:
+    image: ollama/ollama:0.12.9
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  weaviate_data:
+  ollama_data:
