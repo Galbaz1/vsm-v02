@@ -1,0 +1,11 @@
+torch
+transformers
+colpali-engine
+weaviate-client
+qwen-vl-utils
+pdf2image
+python-dotenv
+fastapi
+uvicorn
+pillow
+numpy

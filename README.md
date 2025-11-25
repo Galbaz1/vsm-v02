@@ -7,14 +7,14 @@ A local, agentic RAG stack for searching technical asset manuals with visual gro
 - **Parsing**: LandingAI Agentic Document Extraction (ADE) for PDF parsing
 - **Vector DB**: Local Weaviate (Docker) with Ollama embeddings
 - **Backend API**: FastAPI serving search endpoints and static assets
-- **Frontend**: Next.js 14 with Tailwind CSS and shadcn/ui
+- **Frontend**: Next.js 16, React 19, Tailwind CSS v4, and shadcn/ui
 
 ## Quick Start
 
 ### Prerequisites
 
 - Python 3.12+ (Conda env `vsm-hva`)
-- Node.js 18+
+- Node.js 18.17+
 - Docker & Docker Compose
 - LandingAI API key (set in `.env`)
 
@@ -109,6 +109,9 @@ LANDINGAI_API_KEY=your_key_here
 ```
 
 ### Frontend (`frontend/.env.local`)
+
+> [!TIP]
+> You can copy the example environment file: `cp frontend/.env.example frontend/.env.local`
 ```
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8001
 ```
@@ -133,8 +136,9 @@ See individual READMEs:
 - **LandingAI ADE**: Document parsing with layout awareness
 - **Weaviate**: Vector database with Ollama embeddings
 - **FastAPI**: REST API with Pydantic validation
-- **Next.js 14**: React framework with App Router
-- **Tailwind CSS**: Utility-first styling
+- **Next.js 16**: React framework with App Router
+- **React 19**: Library for web and native user interfaces
+- **Tailwind CSS v4**: Utility-first styling
 - **shadcn/ui**: Accessible component library
 - **React Query**: Data fetching and caching
 
