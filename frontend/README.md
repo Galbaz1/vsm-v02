@@ -4,8 +4,9 @@ Modern Next.js frontend for semantic search over technical asset manuals with vi
 
 ## Tech Stack
 
-- **Next.js 14** (App Router) with TypeScript
-- **Tailwind CSS** for styling
+- **Next.js 16** (App Router) with TypeScript
+- **React 19** for UI components
+- **Tailwind CSS v4** for styling
 - **shadcn/ui** for UI components
 - **React Query** (@tanstack/react-query) for data fetching
 - **Axios** for API calls
