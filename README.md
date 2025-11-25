@@ -35,13 +35,13 @@ docker compose exec ollama ollama pull nomic-embed-text
 conda activate vsm-hva
 
 # Parse PDF with LandingAI ADE
-python parse_with_landingai.py data/uk_firmware.pdf output_landingai.json
+python scripts/parse_with_landingai.py data/uk_firmware.pdf output_landingai.json
 
 # Generate page previews
-python generate_previews.py
+python scripts/generate_previews.py
 
 # Ingest into Weaviate
-python weaviate_ingest_manual.py output_landingai.json "UK Firmware Manual"
+python scripts/weaviate_ingest_manual.py output_landingai.json "UK Firmware Manual"
 ```
 
 ### 3. Start Backend API
@@ -76,23 +76,25 @@ vsm_demo_v02/
 ├── static/                # Generated assets
 │   ├── manuals/          # PDF files
 │   └── previews/         # Page preview images
-├── parse_with_landingai.py    # ADE parsing script
-├── weaviate_ingest_manual.py  # Weaviate ingestion
-├── generate_previews.py       # Preview generation
-└── docker-compose.yml         # Weaviate + Ollama setup
+├── scripts/               # Utility scripts
+│   ├── parse_with_landingai.py
+│   ├── weaviate_ingest_manual.py
+│   ├── generate_previews.py
+│   └── weaviate_search_manual.py
+├── docker-compose.yml         # Weaviate + Ollama setup
 ```
 
 ## Scripts
 
 ### Parsing
-- `parse_with_landingai.py <pdf_path> <output_json>` - Parse PDF with LandingAI ADE
+- `scripts/parse_with_landingai.py <pdf_path> <output_json>` - Parse PDF with LandingAI ADE
 
 ### Ingestion
-- `weaviate_ingest_manual.py <json_path> <manual_name>` - Ingest parsed chunks into Weaviate
-- `generate_previews.py [pdf_path] [output_dir]` - Generate PNG previews from PDF
+- `scripts/weaviate_ingest_manual.py <json_path> <manual_name>` - Ingest parsed chunks into Weaviate
+- `scripts/generate_previews.py [pdf_path] [output_dir]` - Generate PNG previews from PDF
 
 ### Search
-- `weaviate_search_manual.py <query>` - CLI search (for testing)
+- `scripts/weaviate_search_manual.py <query>` - CLI search (for testing)
 
 ## API Endpoints
 
