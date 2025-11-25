@@ -39,6 +39,12 @@ COLLECTION_NAME = "PDFDocuments"
 BATCH_SIZE = 32  # 8x larger than baseline (leverage 256GB RAM)
 NUM_WORKERS = 8  # Parallel image loading threads
 
+# Manual name to directory mapping
+MANUAL_DIR_MAP = {
+    "Technical Manual": "techman",
+    "UK Firmware Manual": "uk_firmware",
+}
+
 
 class MLXColQwenIngester:
     """M3-optimized ColQwen ingestion pipeline."""
@@ -76,7 +82,14 @@ class MLXColQwenIngester:
         
     def load_images_parallel(self, manual_name: str) -> List[Image.Image]:
         """Load preview images with parallel processing."""
-        dir_name = manual_name.lower().replace(' ', '_')
+        # Get directory name from mapping
+        if manual_name not in MANUAL_DIR_MAP:
+            raise ValueError(
+                f"Unknown manual: '{manual_name}'\n"
+                f"Available manuals: {list(MANUAL_DIR_MAP.keys())}"
+            )
+        
+        dir_name = MANUAL_DIR_MAP[manual_name]
         preview_dir = Path(f"static/previews/{dir_name}")
         
         if not preview_dir.exists():
@@ -186,6 +199,8 @@ class MLXColQwenIngester:
         print(f"\n[Weaviate] Ingesting {len(images)} pages...")
         start = time.time()
         
+        dir_name = MANUAL_DIR_MAP[manual_name]
+        
         with coll.batch.fixed_size(batch_size=100) as batch:
             for page_num, (image, embedding) in enumerate(zip(images, embeddings), start=1):
                 multi_vector = embedding.tolist()
@@ -194,7 +209,7 @@ class MLXColQwenIngester:
                     "page_id": page_num,
                     "asset_manual": manual_name,
                     "page_number": page_num,
-                    "image_path": f"static/previews/{manual_name.lower().replace(' ', '_')}/page-{page_num}.png",
+                    "image_path": f"static/previews/{dir_name}/page-{page_num}.png",
                 }
                 
                 batch.add_object(properties=props, vector=multi_vector)
