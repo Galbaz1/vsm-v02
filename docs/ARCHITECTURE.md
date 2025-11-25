@@ -80,9 +80,21 @@ graph TB
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
 | **Weaviate** | `semitechnologies/weaviate:1.34.0` | 8080 (HTTP), 50051 (gRPC) | Vector database |
-| **Ollama** | `ollama/ollama:latest` | 11434 | Local LLM inference + embeddings |
+| **Ollama** | `ollama/ollama:latest` | 11434 | LLM (gpt-oss) + embeddings |
 
 **Configuration:** [docker-compose.yml](file:///Users/lab/Documents/vsm_demo_v02/docker-compose.yml)
+
+### Models
+
+| Role | Model | Runtime | Active Params | Memory |
+|------|-------|---------|---------------|--------|
+| **Decision Agent** | gpt-oss:120b | Ollama | 5.1B (MoE) | ~65GB |
+| **Complex Tools** | gpt-oss:120b | Ollama | 5.1B | shared |
+| **Vision** | Qwen3-VL-8B | MLX | 8B | ~8GB |
+| **Retrieval** | ColQwen2.5-v0.2 | PyTorch | 2B | ~4GB |
+| **Embeddings** | nomic-embed-text | Ollama | - | ~2GB |
+
+**Why gpt-oss-120B?** Elysia-recommended MoE model (5.1B active parameters) optimized for agentic reasoning. Single model for both decision agent and complex tools simplifies architecture.
 
 ### Backend (Python 3.12)
 
@@ -123,20 +135,38 @@ graph TB
 3. Both pipelines ready for search
 ```
 
-### Search Flow (Runtime)
+### Search Flow (Runtime - Current)
 
 ```
-1. User query → Agent (api/services/agent.py)
-   ↓
-2. Agent decides strategy:
-   - Simple query → fast_only (AssetManual)
-   - Visual query → colqwen_only (PDFDocuments)
-   - Complex query → both (progressive results)
-   ↓
-3. Stream results via NDJSON
-   ↓
-4. Frontend displays with visual grounding
+User Query → Agent (rule-based)
+           ├→ FastVectorSearchTool → Environment
+           └→ ColQwenSearchTool → Environment
+           → Mock text response
+           → Stream NDJSON to frontend
 ```
+
+### Search Flow (Target - LLM Agent)
+
+```
+User Query → Decision Agent (gpt-oss-120B)
+           │
+           ├─[text query]→ FastVectorSearchTool
+           │               └→ Result(objects, llm_message) → Environment
+           │
+           ├─[visual query]→ ColQwenSearchTool
+           │                 └→ Result(pages, llm_message) → Environment
+           │                     │
+           │                     └→ VisualInterpretationTool (Qwen3-VL)
+           │                         └→ Result(interpretation) → Environment
+           │
+           └─[has results]→ TextResponseTool
+                            └→ Streaming response to frontend
+```
+
+**Key patterns:** 
+- Environment accumulates results across tool calls
+- Each Result has `llm_message` for decision agent context
+- Tools expose `is_tool_available` for conditional routing
 
 ---
 
@@ -227,28 +257,36 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8001
 
 ## Current Implementation Status
 
-### ✅ Completed (Phase 1 & 2)
+### ✅ Completed (Phase 1-2: Search Pipelines)
 
 - [x] Regular RAG pipeline (LandingAI → Weaviate → FastAPI)
-- [x] ColQwen ingestion script with multi-vector support
-- [x] Agent service with rule-based strategy selection
+- [x] ColQwen ingestion with multi-vector support
 - [x] Streaming NDJSON endpoint (`/agentic_search`)
-- [x] Frontend UI with visual grounding
-- [x] Bounding box overlay on preview images
+- [x] Frontend UI with visual grounding + bbox overlay
 - [x] Multi-manual support (uk_firmware.pdf, techman.pdf)
+- [x] Benchmark: Hit@5 90%, MRR 0.72
 
-### 🚧 In Progress (Phase 3)
+### ✅ Completed (Phase 3: Agent Foundation)
 
-- [ ] Progressive UI updates (fast results → ColQwen refinement)
-- [ ] Streaming response integration in frontend
-- [ ] LLM-based agent (upgrade from rule-based)
+- [x] Elysia-style `Environment` class (`api/services/environment.py`)
+- [x] `Tool` base class with `is_tool_available`, `run_if_true`
+- [x] `FastVectorSearchTool`, `ColQwenSearchTool` wrappers
+- [x] `Result`/`Error`/`Response`/`Status` schemas
+- [x] Agent refactored to decision tree pattern
 
-### 📋 Future Enhancements
+### 🚧 In Progress (Phase 4: LLM Integration)
 
-- [ ] Answer generation with Qwen2.5-VL
-- [ ] Caching layer for repeated queries
-- [ ] Query history and bookmarks
-- [ ] Multi-manual comparison queries
+- [ ] gpt-oss-120B via Ollama for decision agent
+- [ ] Replace rule-based routing with LLM decisions
+- [ ] Implement `TextResponseTool` with real generation
+
+### 📋 Future (Phase 5: Visual Interpretation)
+
+- [ ] Qwen3-VL-8B via MLX for page interpretation
+- [ ] `VisualInterpretationTool` after ColQwen search
+- [ ] Synthesis combining text + visual results
+
+**See:** [TODO.md](/TODO.md) for detailed sprint items
 
 ---
 
@@ -298,15 +336,23 @@ API docs: `http://localhost:8001/docs`
 
 **Decision:** Use agent to route queries intelligently rather than always running both.
 
-### Why Not Elysia?
+### Why Elysia Patterns (Not Full Elysia)?
 
-Elysia (Weaviate's agentic RAG framework) was considered but not used because:
-- ❌ Doesn't expose custom metadata (bounding boxes, preview images)
-- ❌ Generic UI not optimized for manual search UX
-- ✅ Custom FastAPI gives full control over visual grounding
-- ✅ Can add Elysia later as complementary tool
+We adopt Elysia's architecture patterns but not the framework itself:
 
-**Source:** [docs/USING_WITH_ELYSIA.md](file:///Users/lab/Documents/vsm_demo_v02/docs/USING_WITH_ELYSIA.md)
+**What We Use:**
+- ✅ `Environment` for centralized state across tools
+- ✅ `Tool` base class with `is_tool_available`, `run_if_true`
+- ✅ `Result`/`Error` objects for typed outputs with `llm_message`
+- ✅ Decision tree pattern: Agent → Tools → Environment → Agent
+
+**Why Not `pip install elysia-ai`:**
+- ❌ Need custom bbox/preview metadata in Results
+- ❌ Elysia uses DSPy/LiteLLM; we want direct Ollama/MLX
+- ❌ ColQwen multi-vector retrieval is custom
+- ❌ Visual interpretation (VLM) not in Elysia
+
+**Reference:** Elysia cloned to `~/elysia-reference` for pattern reference
 
 ### Why Local-First?
 

@@ -7,58 +7,74 @@ alwaysApply: true
 ## Stack
 - **Backend**: Python 3.12, FastAPI, Weaviate 1.34
 - **Frontend**: Next.js 16, React 19, Tailwind v4
-- **Inference**: MLX (target), Ollama (embeddings only)
-- **Models**: Qwen3 (routing/synthesis), Qwen2.5-VL (vision), ColQwen2.5-v0.2
+- **Inference**: Ollama (gpt-oss), MLX (VLM only)
 - **Env**: Conda `vsm-hva`
+
+## Models (Final)
+| Role | Model | Runtime | Active Params | Memory |
+|------|-------|---------|---------------|--------|
+| Decision Agent | `gpt-oss:120b` | Ollama | 5.1B (MoE) | ~65GB |
+| Complex Tools | `gpt-oss:120b` | Ollama | 5.1B (MoE) | shared |
+| Vision | `Qwen3-VL-8B` | MLX | 8B | ~8GB |
+| Retrieval | `ColQwen2.5-v0.2` | PyTorch | 2B | ~4GB |
+| Embeddings | `nomic-embed-text` | Ollama | - | ~2GB |
+
+**Why gpt-oss-120B**: Elysia-recommended, MoE (fast), agentic-trained, single model for both roles.
 
 ## Structure
 ```
 api/
 ├── main.py           # Entry
 ├── core/config.py    # Settings
-├── schemas/          # Pydantic
-├── services/         # Logic (search.py, colqwen.py, agent.py, tools/)
+├── schemas/          # Pydantic (agent.py has Result/Error)
+├── services/         # Logic
+│   ├── agent.py      # Decision tree orchestrator
+│   ├── environment.py # Centralized state
+│   ├── search.py     # FastVector (AssetManual)
+│   ├── colqwen.py    # ColQwen (PDFDocuments)
+│   └── tools/        # Tool implementations
 └── endpoints/        # Thin routes only
-scripts/              # Run from root: python scripts/foo.py
+scripts/              # Run from root
 static/previews/      # Page PNGs
 static/manuals/       # PDFs
-data/                 # Source PDFs, parsed JSON, benchmarks
 ```
 
 ## Naming
 - Python: `snake_case` (files, funcs, vars)
 - Classes: `PascalCase`
 - Constants: `UPPER_SNAKE_CASE`
-- TypeScript: `camelCase` vars, `PascalCase` components
 
 ## Collections
-| Collection | Vectorizer | Dim | Use |
-|------------|-----------|-----|-----|
-| `AssetManual` | nomic-embed-text | 768 | Text chunks |
-| `PDFDocuments` | colqwen (named) | 1024×128 | Page images |
+| Collection | Vectorizer | Use |
+|------------|-----------|-----|
+| `AssetManual` | nomic-embed-text | Text chunks |
+| `PDFDocuments` | ColQwen2.5 | Page images (multi-vector) |
 
 **Never delete collections** - append mode, check exists first.
 
 ## Ports
-- API: 8001
-- Frontend: 3000
-- Weaviate: 8080
-- Ollama: 11434
+| Service | Port |
+|---------|------|
+| API | 8001 |
+| Frontend | 3000 |
+| Weaviate | 8080 |
+| Ollama | 11434 |
+| MLX Server | 8000 |
 
 ## Commands
 ```bash
 # Infrastructure
 docker compose up -d                    # Weaviate + Ollama
+ollama pull gpt-oss:120b                # Decision/Complex LM
 uvicorn api.main:app --reload --port 8001
-cd frontend && npm run dev
 
-# MLX (target inference)
-pip install mlx mlx-lm
-mlx_lm.server --model mlx-community/Qwen2.5-7B-Instruct-4bit --port 8000
+# VLM (MLX)
+pip install mlx mlx-vlm
+mlx_vlm.server --model mlx-community/Qwen3-VL-8B-Instruct-4bit --port 8000
 
 # Test
-python scripts/run_benchmark.py
 curl "http://localhost:8001/search?query=voltage"
+curl -N "http://localhost:8001/agentic_search?query=show+diagram"
 ```
 
 ## Rules
@@ -68,5 +84,6 @@ curl "http://localhost:8001/search?query=voltage"
 4. Set `PYTORCH_ENABLE_MPS_FALLBACK=1` for ColQwen
 5. Never commit `.env` files
 6. Update ARCHITECTURE.md for schema/API changes
-7. Prefer MLX over Ollama for LLM inference (Apple Silicon native)
-8. Use Elysia patterns: Environment state, Tool availability, Error objects
+7. Single LLM (gpt-oss) for decision + complex; MLX only for VLM
+8. Use Elysia patterns: Environment, Tool base, Result/Error objects
+9. Tools yield `Result` with `llm_message` for decision agent context
