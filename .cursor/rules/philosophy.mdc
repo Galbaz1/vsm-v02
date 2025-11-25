@@ -1,0 +1,62 @@
+---
+alwaysApply: true
+---
+
+# Philosophy & Vision
+
+## Core Principles
+1. **Local-first** - All inference runs on M3 256GB Mac Studio
+2. **Dual-pipeline** - Text RAG (fast) + ColQwen (visual) stay separate
+3. **Visual grounding** - BBoxes and page images are core, not optional
+4. **Elysia patterns** - Decision tree, Environment state, Tool availability
+
+## Current Architecture
+```
+User Query → Agent (Elysia-style)
+           ├→ FastVectorSearch (AssetManual, ~0.5s)
+           └→ ColQwenSearch (PDFDocuments, ~3s)
+           → Environment stores results
+           → LLM synthesizes answer (TODO)
+```
+
+## Target State (Dec 2025)
+
+### Agent Evolution
+- [ ] Rule-based routing → **Qwen3 with thinking mode**
+- [ ] Mock responses → **MLX-powered generation**
+- [ ] Keyword matching → **LLM decision with reasoning traces**
+
+### Model Stack (MLX)
+```python
+MODELS = {
+    "router": "Qwen3-30B-A3B-4bit",      # MoE, 3B active
+    "synthesizer": "Qwen3-14B-4bit",      # Answer generation
+    "vision": "Qwen2.5-VL-7B-4bit",       # Page interpretation
+    "embed": "nomic-embed-text"           # Keep Ollama for now
+}
+```
+
+### Key Upgrades
+1. **MLX inference** - Native Apple Silicon, 4x faster TTFT
+2. **Streaming synthesis** - Real token streaming, not mock
+3. **Visual interpretation** - VLM reads ColQwen pages
+4. **Self-healing errors** - Error objects inform retry logic
+
+## Design Decisions
+
+### Why Not Full Elysia?
+- Need custom bbox/preview metadata
+- Want MLX not LiteLLM
+- Keep ColQwen multi-vector control
+
+### What We Took from Elysia
+- `Environment` for centralized state
+- `Tool` base with `is_tool_available`, `run_if_true`
+- `Result`/`Error` objects for typed outputs
+- Decision transparency (reasoning exposed)
+
+## Don't Over-Engineer
+- No abstractions for one-time ops
+- No future-proofing hypotheticals
+- Fix the bug, don't refactor surroundings
+- Minimum complexity for current task
