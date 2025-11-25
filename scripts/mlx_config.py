@@ -1,28 +1,34 @@
 """
-Apple Silicon M3 Optimization Configuration
+Apple Silicon M3 Optimization Configuration for ColQwen
 
-Configures PyTorch Metal Performance Shaders for maximum M3 performance.
+Note: The main optimizations are now in colqwen_mlx_ingest.py.
+This file is kept for backwards compatibility but the key setting
+(PYTORCH_ENABLE_MPS_FALLBACK) must be set BEFORE importing torch.
+
+Key learnings from MPS limitations:
+- MPS has a 65536 output channel limit for convolutions
+- ColQwen2.5's vision encoder exceeds this limit
+- Solution: PYTORCH_ENABLE_MPS_FALLBACK=1 allows CPU fallback
+- torch.compile is incompatible with MPS fallback mode
+
+Reference: https://github.com/pytorch/pytorch/issues/152278
 """
-import torch
 import os
+import torch
+
 
 def configure_metal_performance():
     """
     Configure PyTorch for optimal Apple Silicon M3 performance.
     
-    This function should be called BEFORE loading any models.
+    IMPORTANT: PYTORCH_ENABLE_MPS_FALLBACK must be set BEFORE importing torch.
+    The colqwen_mlx_ingest.py script handles this at the top of the file.
     """
-    # Enable MPS backend
-    torch.backends.mps.enabled = True
-    
-    # Use high-precision matrix multiplication
-    torch.set_float32_matmul_precision('high')
-    
-    # Set Metal memory fraction (use 80% of available 256GB)
-    torch.mps.set_per_process_memory_fraction(0.8)
-    
-    # Disable memory fragmentation warnings
-    os.environ['PYTORCH_MPS_HIGH_WATERMARK_RATIO'] = '0.0'
+    # Ensure fallback is enabled (should already be set before torch import)
+    if "PYTORCH_ENABLE_MPS_FALLBACK" not in os.environ:
+        print("[M3 Config] WARNING: PYTORCH_ENABLE_MPS_FALLBACK not set!")
+        print("[M3 Config] This may cause errors with ColQwen vision encoder.")
+        os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
     
     # Disable tokenizer warnings (improves performance)
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -30,9 +36,10 @@ def configure_metal_performance():
     print("[M3 Config] Metal Performance Shaders configured")
     print(f"[M3 Config] MPS available: {torch.backends.mps.is_available()}")
     print(f"[M3 Config] MPS built: {torch.backends.mps.is_built()}")
+    print(f"[M3 Config] MPS fallback enabled: {os.environ.get('PYTORCH_ENABLE_MPS_FALLBACK', 'not set')}")
     
     if not torch.backends.mps.is_available():
-        print("[M3 Config] WARNING: MPS not available! Falling back to CPU")
+        print("[M3 Config] WARNING: MPS not available! Using CPU only.")
         return False
     
     return True

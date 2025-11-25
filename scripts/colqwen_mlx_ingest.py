@@ -3,12 +3,14 @@
 MLX-Optimized ColQwen2.5 Ingestion for Apple Silicon M3
 
 Optimizations for M3 Mac Studio (256GB RAM):
-- Large batch processing (32 pages/batch vs 4)
-- Metal Performance Shaders via PyTorch MPS
-- torch.compile with AOT for Metal acceleration
+- MPS with CPU fallback for unsupported ops (>65536 channels)
+- Optimized batch processing (8 pages/batch - balanced for MPS+CPU hybrid)
 - Parallel image loading (8 workers)
 - Unified memory architecture exploitation
-- Automatic mixed precision (bfloat16)
+- bfloat16 precision for memory efficiency
+
+Note: torch.compile removed due to MPS compatibility issues with vision encoders.
+See: https://github.com/pytorch/pytorch/issues/152278
 
 Usage:
     python scripts/colqwen_mlx_ingest.py "Technical Manual"
@@ -17,26 +19,34 @@ Usage:
 
 import sys
 import os
+import warnings
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from typing import List
 import time
 
-# M3 Optimization Config - MUST be imported first
-from mlx_config import configure_metal_performance, get_device
+# Suppress ResourceWarning from colpali_engine temp directories
+warnings.filterwarnings("ignore", category=ResourceWarning, message="Implicitly cleaning up")
+
+# CRITICAL: Enable MPS fallback BEFORE importing torch
+# This allows unsupported MPS ops (conv with >65536 channels) to fall back to CPU
+# Reference: https://github.com/pytorch/pytorch/issues/134416
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 import torch
 from PIL import Image
 import weaviate
 from weaviate.classes.config import Configure, Property, DataType
+import weaviate.classes.config as wc
 from colpali_engine.models import ColQwen2_5, ColQwen2_5_Processor
-
-# Configure Metal before any model loading
-configure_metal_performance()
 
 # M3-Optimized Constants
 COLLECTION_NAME = "PDFDocuments"
-BATCH_SIZE = 32  # 8x larger than baseline (leverage 256GB RAM)
+# Batch size 8: Balanced for MPS+CPU hybrid execution
+# - Too large (32): CPU fallback ops become bottleneck
+# - Too small (1-2): Underutilizes GPU parallelism
+# - 8 is optimal for vision models with partial CPU fallback
+BATCH_SIZE = 8
 NUM_WORKERS = 8  # Parallel image loading threads
 
 # Manual name to directory mapping
@@ -46,16 +56,43 @@ MANUAL_DIR_MAP = {
 }
 
 
-class MLXColQwenIngester:
-    """M3-optimized ColQwen ingestion pipeline."""
+def configure_m3_optimizations():
+    """Configure PyTorch for M3 with MPS fallback."""
+    print("[M3 Config] Configuring PyTorch for Apple Silicon...")
+    print(f"[M3 Config] PYTORCH_ENABLE_MPS_FALLBACK={os.environ.get('PYTORCH_ENABLE_MPS_FALLBACK', 'not set')}")
     
-    def __init__(self):
-        self.device = get_device()
+    # Check MPS availability
+    mps_available = torch.backends.mps.is_available()
+    mps_built = torch.backends.mps.is_built()
+    
+    print(f"[M3 Config] MPS available: {mps_available}")
+    print(f"[M3 Config] MPS built: {mps_built}")
+    
+    if mps_available:
+        # Use high precision for matrix ops
+        torch.set_float32_matmul_precision('high')
+        print("[M3 Config] Float32 matmul precision: high")
+    
+    return "mps" if mps_available else "cpu"
+
+
+def load_image_safely(img_path: Path) -> Image.Image:
+    """Load image and convert to RGB to ensure file is closed."""
+    with Image.open(img_path) as img:
+        # Convert to RGB and return a copy (closes the file handle)
+        return img.convert("RGB").copy()
+
+
+class MLXColQwenIngester:
+    """M3-optimized ColQwen ingestion pipeline with MPS fallback."""
+    
+    def __init__(self, device: str):
+        self.device = device
         self.model = None
         self.processor = None
         
     def initialize_model(self):
-        """Load and compile ColQwen model for M3."""
+        """Load ColQwen model for M3 (no torch.compile - incompatible with MPS fallback)."""
         print(f"\n[M3] Loading ColQwen2.5 on {self.device}...")
         start = time.time()
         
@@ -66,23 +103,20 @@ class MLXColQwenIngester:
             device_map=self.device,
         ).eval()
         
-        # OPTIMIZATION: Compile model for Metal acceleration
-        print("[M3] Compiling model for Metal...")
-        self.model = torch.compile(
-            self.model,
-            backend="aot_eager",  # Ahead-of-time compilation for Metal
-        )
+        # NOTE: torch.compile is DISABLED
+        # Reason: AOT compilation breaks with MPS fallback for vision encoder's
+        # patch embedding (3D convolution with >65536 output channels)
+        # Reference: https://github.com/pytorch/pytorch/issues/152278
         
         self.processor = ColQwen2_5_Processor.from_pretrained(
             "vidore/colqwen2.5-v0.2"
         )
         
         elapsed = time.time() - start
-        print(f"[M3] Model loaded and compiled in {elapsed:.2f}s")
+        print(f"[M3] Model loaded in {elapsed:.2f}s (torch.compile disabled for MPS compatibility)")
         
     def load_images_parallel(self, manual_name: str) -> List[Image.Image]:
         """Load preview images with parallel processing."""
-        # Get directory name from mapping
         if manual_name not in MANUAL_DIR_MAP:
             raise ValueError(
                 f"Unknown manual: '{manual_name}'\n"
@@ -109,9 +143,9 @@ class MLXColQwenIngester:
         print(f"\n[M3] Loading {len(image_files)} images in parallel ({NUM_WORKERS} workers)...")
         start = time.time()
         
-        # OPTIMIZATION: Parallel image loading
+        # OPTIMIZATION: Parallel image loading with proper file closing
         with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
-            images = list(executor.map(Image.open, image_files))
+            images = list(executor.map(load_image_safely, image_files))
         
         elapsed = time.time() - start
         print(f"[M3] Loaded {len(images)} images in {elapsed:.2f}s ({len(images)/elapsed:.1f} imgs/sec)")
@@ -119,9 +153,10 @@ class MLXColQwenIngester:
         return images
     
     def generate_embeddings_optimized(self, images: List[Image.Image]) -> List:
-        """Generate multi-vector embeddings with M3 optimizations."""
+        """Generate multi-vector embeddings with MPS + CPU fallback."""
         print(f"\n[M3] Generating embeddings for {len(images)} pages")
-        print(f"[M3] Batch size: {BATCH_SIZE} (M3-optimized, 8x baseline)")
+        print(f"[M3] Batch size: {BATCH_SIZE} (optimized for MPS+CPU hybrid)")
+        print(f"[M3] Note: Some ops will fall back to CPU (expected for >65536 channel convolutions)")
         
         start_time = time.time()
         embeddings = []
@@ -132,20 +167,19 @@ class MLXColQwenIngester:
             batch = images[i:i+BATCH_SIZE]
             batch_num = i // BATCH_SIZE + 1
             
-            print(f"[M3] Batch {batch_num}/{total_batches} ({len(batch)} pages)...", end=" ")
+            print(f"[M3] Batch {batch_num}/{total_batches} ({len(batch)} pages)...", end=" ", flush=True)
             batch_start = time.time()
             
             # Process batch
             batch_input = self.processor.process_images(batch).to(self.device)
             
-            # OPTIMIZATION: Use autocast for Metal
+            # Generate embeddings (no autocast - MPS autocast has limited support)
             with torch.no_grad():
-                with torch.autocast(device_type="mps", dtype=torch.bfloat16):
-                    batch_embeddings = self.model(**batch_input)
+                batch_embeddings = self.model(**batch_input)
             
-            # Convert and store
+            # Convert and store (bfloat16 -> float32 for numpy compatibility)
             for emb in batch_embeddings:
-                embeddings.append(emb.cpu().numpy())
+                embeddings.append(emb.cpu().float().numpy())
             
             # Clean up GPU memory
             del batch_input
@@ -163,28 +197,56 @@ class MLXColQwenIngester:
         
         return embeddings
     
-    def create_collection(self, client: weaviate.WeaviateClient):
-        """Create Weaviate collection with multi-vector config."""
+    def ensure_collection(self, client: weaviate.WeaviateClient):
+        """Ensure Weaviate collection exists with multi-vector config.
+        
+        Creates collection if it doesn't exist, otherwise reuses existing.
+        Uses Weaviate's multi-vector support for ColBERT-style late interaction.
+        Reference: https://docs.weaviate.io/weaviate/tutorials/multi-vector-embeddings
+        """
         existing = client.collections.list_all()
         
         if COLLECTION_NAME in existing:
-            print(f"\n[Weaviate] Deleting existing {COLLECTION_NAME}...")
-            client.collections.delete(COLLECTION_NAME)
+            print(f"\n[Weaviate] Collection {COLLECTION_NAME} already exists (will append)")
+            return
         
-        print(f"[Weaviate] Creating {COLLECTION_NAME} with multi-vector support...")
+        print(f"\n[Weaviate] Creating {COLLECTION_NAME} with multi-vector support...")
         
+        # Multi-vector configuration for ColQwen embeddings
+        # Each page produces ~750 vectors of 128 dimensions (ColBERT-style)
         client.collections.create(
             name=COLLECTION_NAME,
             properties=[
-                Property(name="page_id", data_type=DataType.INT),
-                Property(name="asset_manual", data_type=DataType.TEXT),
-                Property(name="page_number", data_type=DataType.INT),
-                Property(name="image_path", data_type=DataType.TEXT,
-                        skip_vectorization=True),
+                wc.Property(name="page_id", data_type=wc.DataType.INT),
+                wc.Property(name="asset_manual", data_type=wc.DataType.TEXT),
+                wc.Property(name="page_number", data_type=wc.DataType.INT),
+                wc.Property(name="image_path", data_type=wc.DataType.TEXT,
+                           skip_vectorization=True),
             ],
+            # Named multi-vector configuration (required for ColBERT/ColQwen)
+            # Using multi_vector_config param (fixes Dep027 deprecation warning)
+            vector_config=[
+                Configure.MultiVectors.self_provided(
+                    name="colqwen",
+                    multi_vector_config=Configure.VectorIndex.MultiVector.multi_vector(),
+                    vector_index_config=Configure.VectorIndex.hnsw()
+                )
+            ]
         )
         
-        print(f"[Weaviate] Collection created")
+        print(f"[Weaviate] Collection created with 'colqwen' multi-vector index")
+    
+    def delete_manual_pages(self, client: weaviate.WeaviateClient, manual_name: str):
+        """Delete existing pages for a specific manual before re-ingesting."""
+        coll = client.collections.get(COLLECTION_NAME)
+        
+        # Delete objects where asset_manual matches
+        result = coll.data.delete_many(
+            where=weaviate.classes.query.Filter.by_property("asset_manual").equal(manual_name)
+        )
+        
+        if result.successful > 0:
+            print(f"[Weaviate] Deleted {result.successful} existing pages for '{manual_name}'")
     
     def ingest_to_weaviate(
         self,
@@ -193,16 +255,22 @@ class MLXColQwenIngester:
         images: List[Image.Image],
         embeddings: List
     ):
-        """Ingest pages with embeddings to Weaviate."""
+        """Ingest pages with multi-vector embeddings to Weaviate.
+        
+        Uses named vector format: {"colqwen": [[v1], [v2], ...]}
+        as required by Weaviate multi-vector configuration.
+        """
         coll = client.collections.get(COLLECTION_NAME)
         
-        print(f"\n[Weaviate] Ingesting {len(images)} pages...")
+        print(f"\n[Weaviate] Ingesting {len(images)} pages with multi-vector embeddings...")
         start = time.time()
         
         dir_name = MANUAL_DIR_MAP[manual_name]
         
-        with coll.batch.fixed_size(batch_size=100) as batch:
+        with coll.batch.dynamic() as batch:
             for page_num, (image, embedding) in enumerate(zip(images, embeddings), start=1):
+                # Convert embedding to list format for Weaviate
+                # Shape: (seq_len, 128) -> list of lists
                 multi_vector = embedding.tolist()
                 
                 props = {
@@ -212,7 +280,14 @@ class MLXColQwenIngester:
                     "image_path": f"static/previews/{dir_name}/page-{page_num}.png",
                 }
                 
-                batch.add_object(properties=props, vector=multi_vector)
+                # Named vector format required for multi-vector collections
+                batch.add_object(
+                    properties=props,
+                    vector={"colqwen": multi_vector}
+                )
+                
+                if page_num % 25 == 0:
+                    print(f"[Weaviate] Added {page_num}/{len(images)} pages...")
         
         elapsed = time.time() - start
         print(f"[Weaviate] ✅ Ingestion complete in {elapsed:.2f}s")
@@ -228,13 +303,16 @@ def main():
     manual_name = sys.argv[1]
     
     print("\n" + "="*70)
-    print("  MLX-Optimized ColQwen Ingestion for Apple Silicon M3 (256GB RAM)")
+    print("  ColQwen Ingestion for Apple Silicon M3 (MPS + CPU Fallback)")
     print("="*70)
     
     overall_start = time.time()
     
+    # Configure M3 optimizations and get device
+    device = configure_m3_optimizations()
+    
     # Initialize ingester
-    ingester = MLXColQwenIngester()
+    ingester = MLXColQwenIngester(device)
     
     # Load model
     ingester.initialize_model()
@@ -247,7 +325,8 @@ def main():
     
     # Ingest to Weaviate
     with weaviate.connect_to_local() as client:
-        ingester.create_collection(client)
+        ingester.ensure_collection(client)
+        ingester.delete_manual_pages(client, manual_name)  # Remove old pages for this manual
         ingester.ingest_to_weaviate(client, manual_name, images, embeddings)
     
     overall_time = time.time() - overall_start
