@@ -26,15 +26,16 @@ User Query → Agent (Elysia-style)
 - [ ] Mock responses → **MLX-powered generation**
 - [ ] Keyword matching → **LLM decision with reasoning traces**
 
-### Model Stack (MLX)
-```python
-MODELS = {
-    "router": "Qwen3-30B-A3B-4bit",      # MoE, 3B active
-    "synthesizer": "Qwen3-14B-4bit",      # Answer generation
-    "vision": "Qwen2.5-VL-7B-4bit",       # Page interpretation
-    "embed": "nomic-embed-text"           # Keep Ollama for now
-}
-```
+### Model Stack (MLX on M3 256GB)
+| Role | Model | Active Params | Memory |
+|------|-------|---------------|--------|
+| Router | `Qwen3-30B-A3B-4bit` | 3B (MoE) | ~17GB |
+| Synthesizer | `Qwen3-14B-4bit` | 14B | ~9GB |
+| Vision | `Qwen2.5-VL-7B-4bit` | 7B | ~5GB |
+| Retrieval | `ColQwen2.5-v0.2` | 2B | ~4GB |
+| Embeddings | `nomic-embed-text` | - | Ollama |
+
+Total: ~35GB loaded, 200GB+ for KV cache
 
 ### Key Upgrades
 1. **MLX inference** - Native Apple Silicon, 4x faster TTFT
