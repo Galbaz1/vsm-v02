@@ -4,80 +4,69 @@
 
 ```mermaid
 flowchart TB
-    subgraph Data["📄 Data Ingestion"]
+    subgraph Data[Data Ingestion]
         PDF[PDF Documents]
         PDF --> LandingAI[LandingAI ADE]
-        PDF --> Previews[generate_previews.py]
+        PDF --> Previews[generate_previews]
         LandingAI --> JSON[Parsed JSON]
     end
 
-    subgraph Weaviate["🗄️ Weaviate Local (8080)"]
-        subgraph Collections
-            AM[AssetManual<br/>text chunks]
-            PD[PDFDocuments<br/>page images]
-        end
-        subgraph Metadata
-            CD[Chunk Data<br/>bbox, section]
-            CM[ColQwen Vectors<br/>1024×128 multi-vec]
-        end
+    subgraph Weaviate[Weaviate Local 8080]
+        AM[AssetManual]
+        PD[PDFDocuments]
     end
 
     JSON --> AM
     Previews --> PD
 
-    subgraph Context["📋 Context (TreeData)"]
+    subgraph Context[Context TreeData]
         UP[User Prompt]
         CH[Conversation History]
-        ENV[Environment<br/>retrieved results]
+        ENV[Environment]
         ERR[Errors]
         TC[Tasks Completed]
     end
 
-    UQ[/"💬 User Query"/] --> Context
+    UQ([User Query]) --> Context
 
-    subgraph Tree["🌳 Decision Tree"]
-        DA[Decision Agent<br/>gpt-oss-120B]
+    subgraph Tree[Decision Tree]
+        DA[Decision Agent gpt-oss-120B]
         
-        subgraph Loop["Self-Healing Loop"]
+        subgraph Loop[Self-Healing Loop]
             TS[Tool Selection]
             TE[Tool Execution]
             RA[Result Assessment]
-            RE[Reasoning & Eval]
-            TS --> TE --> RA --> RE --> TS
+            RE[Reasoning]
         end
         
-        DA --> Loop
+        DA --> TS
+        TS --> TE
+        TE --> RA
+        RA --> RE
+        RE --> TS
     end
 
-    subgraph Tools["🔧 Available Tools"]
-        FVS[FastVectorSearch<br/>~0.5s]
-        CQS[ColQwenSearch<br/>~3s]
-        VIT[VisualInterpret<br/>Qwen3-VL-8B]
-        TR[TextResponse<br/>end=true]
+    subgraph Tools[Available Tools]
+        FVS[FastVectorSearch]
+        CQS[ColQwenSearch]
+        VIT[VisualInterpret]
+        TR[TextResponse]
     end
 
     Context --> DA
-    Tools --> Loop
+    Tools -.-> TE
     
     FVS -.-> AM
     CQS -.-> PD
-    VIT -.-> MLX[MLX Server<br/>8000]
+    VIT -.-> MLX[MLX VLM 8000]
 
-    subgraph Response["📤 Response"]
-        RD[Retrieved Data<br/>+ bbox overlays]
-        TS2[Text Summary<br/>streaming tokens]
+    subgraph Response[Response]
+        RD[Retrieved Data]
+        TS2[Text Summary]
     end
 
-    Loop --> Response
-    Response --> UF[/"👍 User Feedback"/]
-
-    style Data fill:#1a3a2a,stroke:#4ade80
-    style Weaviate fill:#1a2a4a,stroke:#60a5fa
-    style Context fill:#2a2a3a,stroke:#a78bfa
-    style Tree fill:#1a3a3a,stroke:#22d3d3
-    style Tools fill:#3a2a1a,stroke:#fb923c
-    style Response fill:#1a3a3a,stroke:#22d3d3
-    style Loop fill:#0a2a2a,stroke:#14b8a6
+    RA --> Response
+    Response --> UF([User Feedback])
 ```
 
 ---
