@@ -1,6 +1,6 @@
 # Plan: DSPy Migration & Knowledge Context Management
 
-**Created:** 2024-11-26  
+**Created:** 2025-11-26  
 **Status:** PLANNING (not implemented)  
 **Reference:** Elysia source at `docs/elysia-source-code-for-reference-only/`
 
@@ -35,13 +35,62 @@ The agent has **no awareness** of what documentation it has access to. It doesn'
 
 **Current state:** The agent blindly searches without understanding its knowledge base.
 
-### 1.3 No Context Accumulation Between Tools
+### 1.3 Context Accumulation: Current State (Researched 2025-11-26)
 
-Currently, each tool call is somewhat isolated. When tool A retrieves data, tool B doesn't automatically see what was retrieved. There's no smart mechanism to:
-- Track what was already retrieved (avoid duplicate searches)
-- Share reasoning/decisions across iterations
-- Build up a "train of thought" the LLM can follow
-- Self-heal from errors with context
+**What the agent DOES have:**
+
+| Capability | Status | Location |
+|------------|--------|----------|
+| Tool awareness | ✅ YES | LLM sees all tools with descriptions + inputs in prompt (`llm.py:293-308`) |
+| Environment sharing | ✅ YES | All tools read/write to shared `tree_data.environment` (`environment.py:17-249`) |
+| Multi-tool looping | ✅ YES | Can chain all 6 tools, up to 10 iterations (`agent.py:378-454`) |
+| Error tracking | ✅ YES | `tree_data.errors` shown to LLM (last 3) (`llm.py:331-335`) |
+| Auto-triggers | ✅ YES | SummarizeTool auto-runs at 30k tokens (`base.py:417-425`) |
+
+**What the agent DOESN'T have:**
+
+| Gap | Impact | Risk |
+|-----|--------|------|
+| No decision history | Can't detect loops | Same (tool, query) pair might run 3x |
+| No query evolution | Tools always use original prompt | "wiring diagram" searched repeatedly, never refined |
+| No duplicate detection | Wastes iterations | ColQwen + FastVector + Hybrid all search same query |
+| No result scoring | Can't assess sufficiency | LLM doesn't know if results are "good enough" |
+| No manual awareness | Blind routing | Agent doesn't know Tech Manual vs Users Manual purposes |
+| No tool chain patterns | Ad-hoc sequencing | Can't plan "search → visualize → respond" |
+
+**Looping Risk Scenarios:**
+
+```
+Scenario A: Repetitive Search Loop
+  Iter 1: fast_vector_search("wiring diagram") → [text results]
+  Iter 2: colqwen_search("wiring diagram") → [same pages as images]
+  Iter 3: hybrid_search("wiring diagram") → [combined duplicates]
+  ...
+  Iter 10: Hit max_iterations with incomplete answer
+  
+Scenario B: Error Doesn't Learn
+  Iter 1: Error: "No results for X"
+  Iter 2: LLM sees error but no guidance on HOW to recover
+         → Might retry same search with same query
+```
+
+**Current Decision Flow:**
+
+```
+Per Iteration:
+1. _get_available_tools() → Filter by is_tool_available()
+2. _check_auto_triggers() → Run tools that should auto-fire
+3. _make_decision() → LLM or rule-based fallback
+4. _execute_tool() → Run tool, add Result to environment
+5. Check should_end → Break or continue loop
+```
+
+**Key Code Locations:**
+- Tool registration: `agent.py:87-102`
+- Tool metadata to LLM: `llm.py:293-308` (format_tools_description)
+- LLM decision prompt: `llm.py:262-354` (DecisionPromptBuilder)
+- Main loop: `agent.py:378-454`
+- Environment storage: `environment.py:84-133`
 
 ### 1.4 Not Reusable
 
@@ -49,6 +98,35 @@ When deployed for a different company/context:
 - Would need to modify Python code
 - No clear separation between "agent logic" and "domain knowledge"
 - No pattern for adding new knowledge sources
+
+### 1.5 Short-Term Fixes (Pre-DSPy)
+
+These improvements can be made WITHOUT DSPy migration:
+
+```python
+# 1. Add decision history tracking to TreeData
+tree_data.decision_history = [
+    {"iteration": 1, "tool": "fast_vector_search", "query": "...", "found": 5},
+    {"iteration": 2, "tool": "colqwen_search", "query": "...", "found": 3},
+]
+
+# 2. Detect duplicate (tool, query) pairs before executing
+if (tool_name, query) in [(d["tool"], d["query"]) for d in tree_data.decision_history]:
+    # Force different tool or refined query
+    
+# 3. Add result confidence scoring
+yield Result(objects=[...], confidence=0.85, sufficient=False)
+
+# 4. Manual context injection (simple version of Atlas)
+tree_data.knowledge_context = {
+    "manuals": [
+        {"name": "Technical Manual", "topics": ["installation", "wiring", "setup"]},
+        {"name": "Users Manual", "topics": ["operation", "menus", "maintenance"]},
+    ]
+}
+```
+
+**Estimated effort:** 1-2 days for decision history + duplicate detection
 
 ---
 
@@ -811,11 +889,834 @@ This is what makes multi-step reasoning work without manual context threading.
 
 ---
 
-## 10. Rollback Plan
+## 10. DSPy-Powered Benchmarking & Interactive Evaluation
+
+### 10.1 Current State
+
+**Benchmark File:** `data/benchmarks/benchmarksv03.json` (canonical - 20 questions)
+
+**Current Schema (Rich):**
+```json
+{
+  "category": "Complex Problem | Direct Question",
+  "query": "...",
+  "answer": "...",
+  "evidence": {
+    "document": "techman.pdf | uk_firmware.pdf",
+    "locations": [{"chapter": "3", "page": "19"}],
+    "section": "3.2.7 Battery and power connections",
+    "visual_element": "Table: Default jumper positions"
+  }
+}
+```
+
+**Current Benchmark Script:** `scripts/run_benchmark.py`
+- Queries API endpoints directly (`/search`, `/agentic_search`)
+- Calculates Hit@1, Hit@3, Hit@5, MRR, Manual Accuracy
+- Compares Regular RAG vs ColQwen pipelines
+- **Limitation:** Not integrated with DSPy, no optimization loop
+
+**Previous Research:** `docs/BENCHMARK_SYSTEM_DESIGN.md`
+- Proposed "Blind Agent & Judge" architecture ✅ REUSE
+- Frontend "Benchmark Mode" concept ✅ REUSE
+- Identified data leakage risk ✅ ADDRESSED
+- Open questions about Judge prompt engineering → SOLVED by DSPy
+
+### 10.2 The "Blind Agent & Judge" Architecture
+
+**Problem:** If the Agent sees the benchmark answers, the test is invalid (data leakage).
+
+**Solution:** Separate the Agent (system under test) from the Judge (evaluator).
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         FRONTEND (Benchmark Mode)                        │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐  │
+│  │ "Suggest        │  │ Run Search      │  │ "Evaluate" Button       │  │
+│  │  Question"      │  │ (normal flow)   │  │ (after response)        │  │
+│  └────────┬────────┘  └────────┬────────┘  └────────────┬────────────┘  │
+└───────────┼────────────────────┼───────────────────────┼────────────────┘
+            │                    │                       │
+            ▼                    ▼                       ▼
+┌───────────────────┐  ┌─────────────────────┐  ┌─────────────────────────┐
+│  GET /benchmark/  │  │  GET /agentic_      │  │  POST /benchmark/       │
+│  suggest          │  │  search?query=...   │  │  evaluate               │
+│                   │  │                     │  │                         │
+│  Returns:         │  │  Agent is BLIND     │  │  Input:                 │
+│  - question only  │  │  (no access to      │  │  - benchmark_id         │
+│  - benchmark_id   │  │   benchmark file)   │  │  - agent_answer         │
+│  - category       │  │                     │  │                         │
+│  (NO answer!)     │  │                     │  │  Judge compares to      │
+│                   │  │                     │  │  ground truth           │
+└───────────────────┘  └─────────────────────┘  └─────────────────────────┘
+```
+
+### 10.3 DSPy LLM-as-Judge Pattern
+
+DSPy provides the exact pattern we need for semantic evaluation:
+
+```python
+import dspy
+
+class TechnicalJudge(dspy.Signature):
+    """
+    Judge if the agent's answer is factually correct compared to ground truth.
+    Focus on technical accuracy: specific values (voltages, resistances, pin numbers).
+    Ignore stylistic differences (phrasing, formatting).
+    """
+    
+    question: str = dspy.InputField(desc="The technical question asked")
+    ground_truth: str = dspy.InputField(desc="The verified correct answer from documentation")
+    agent_answer: str = dspy.InputField(desc="The answer generated by the Agent")
+    
+    # Structured outputs
+    score: int = dspy.OutputField(desc="Score 0-100 based on factual accuracy")
+    reasoning: str = dspy.OutputField(desc="Brief explanation of the score")
+    missing_facts: list[str] = dspy.OutputField(desc="Key facts from ground truth missing in agent answer")
+    incorrect_facts: list[str] = dspy.OutputField(desc="Factually incorrect statements in agent answer")
+
+# Create the Judge module
+judge = dspy.ChainOfThought(TechnicalJudge)
+
+# Usage
+result = judge(
+    question="How do I set jumpers for 24V with 1800mA charging?",
+    ground_truth="J1C, J1D, J1F, and J1G must be ON. J1A is not used, J1B is OFF, J1E is OFF.",
+    agent_answer="You need to set J1C to ON and J1D to ON for 24V operation."
+)
+# result.score = 40
+# result.reasoning = "Agent correctly identified J1C and J1D but missed J1F and J1G"
+# result.missing_facts = ["J1F must be ON", "J1G must be ON"]
+# result.incorrect_facts = []
+```
+
+**Why DSPy solves the Judge prompt engineering problem:**
+- Structured outputs (score, reasoning, missing_facts) - no JSON parsing needed
+- Type-safe - DSPy validates the output schema
+- Optimizable - can use MIPROv2 to improve Judge accuracy
+- Consistent - same signature always produces same output structure
+
+### 10.4 DSPy Evaluation Framework
+
+DSPy provides built-in evaluation utilities that enable:
+1. **Structured Metrics** - Define custom metrics as Python functions
+2. **Parallel Evaluation** - Multi-threaded evaluation with progress
+3. **MLflow Integration** - Experiment tracking and visualization
+4. **Optimizer Loop** - Use evaluation results to improve prompts
+
+**Key DSPy Evaluation Components:**
+```python
+from dspy.evaluate import Evaluate, SemanticF1
+
+# Define custom metric for RAG
+def rag_metric(example, pred, trace=None):
+    """Evaluate RAG response quality."""
+    # Check if correct page was retrieved
+    retrieved_pages = [r.get("page") for r in pred.retrieved_docs]
+    page_hit = example.expected_page in retrieved_pages
+    
+    # Check if answer covers key facts (semantic)
+    semantic = SemanticF1(decompositional=True)
+    semantic_score = semantic(example, pred)
+    
+    # Combined score
+    return (page_hit * 0.5) + (semantic_score * 0.5)
+
+# Create evaluator
+evaluate = dspy.Evaluate(
+    devset=benchmark_devset,
+    metric=rag_metric,
+    num_threads=16,
+    display_progress=True,
+    display_table=5
+)
+
+# Run evaluation
+result = evaluate(rag_module)
+```
+
+### 10.5 Proposed Architecture
+
+```
+api/
+├── endpoints/
+│   └── benchmark.py         # NEW: /benchmark/suggest, /benchmark/evaluate
+├── evaluation/
+│   ├── __init__.py
+│   ├── judge.py             # TechnicalJudge DSPy Signature + module
+│   ├── metrics.py           # Custom metrics (PageHit, SemanticAnswer, Combined)
+│   ├── devset.py            # Load benchmarksv03.json as dspy.Example list
+│   └── evaluator.py         # VSMEvaluator class wrapping dspy.Evaluate
+
+frontend/
+├── components/
+│   └── BenchmarkMode.tsx    # NEW: Benchmark UI component
+├── lib/hooks/
+│   └── useBenchmark.ts      # NEW: Hook for benchmark API calls
+
+scripts/
+├── run_benchmark.py         # Updated to use DSPy evaluation
+└── run_optimization.py      # NEW: Optimize prompts using benchmark results
+```
+
+### 10.6 Benchmark API Endpoints
+
+**`api/endpoints/benchmark.py`:**
+```python
+"""
+Benchmark endpoints for interactive evaluation.
+
+The Agent has NO access to this file or the benchmark data.
+Only the Judge service can read the ground truth answers.
+"""
+
+import json
+import random
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from pathlib import Path
+
+from api.evaluation.judge import TechnicalJudge
+
+router = APIRouter(prefix="/benchmark", tags=["benchmark"])
+
+# Load benchmark data (server-side only, never exposed to Agent)
+BENCHMARK_PATH = Path("data/benchmarks/benchmarksv03.json")
+_benchmark_data = None
+
+def _load_benchmark():
+    global _benchmark_data
+    if _benchmark_data is None:
+        with open(BENCHMARK_PATH, "r") as f:
+            _benchmark_data = json.load(f)
+    return _benchmark_data
+
+
+class SuggestResponse(BaseModel):
+    benchmark_id: int
+    question: str
+    category: str
+    # NOTE: answer is NOT included - Agent must remain blind
+
+
+class EvaluateRequest(BaseModel):
+    benchmark_id: int
+    agent_answer: str
+
+
+class EvaluateResponse(BaseModel):
+    score: int  # 0-100
+    reasoning: str
+    missing_facts: list[str]
+    incorrect_facts: list[str]
+    # For debugging (optional, could be hidden in production)
+    ground_truth: str | None = None
+
+
+@router.get("/suggest", response_model=SuggestResponse)
+async def suggest_question(category: str | None = None):
+    """
+    Get a random benchmark question for testing.
+    
+    The answer is NOT returned - the Agent must answer blindly.
+    """
+    benchmark = _load_benchmark()
+    
+    # Filter by category if specified
+    if category:
+        filtered = [b for b in benchmark if b.get("category") == category]
+        if not filtered:
+            raise HTTPException(404, f"No questions in category: {category}")
+        item = random.choice(filtered)
+    else:
+        item = random.choice(benchmark)
+    
+    # Find index for benchmark_id
+    benchmark_id = benchmark.index(item)
+    
+    return SuggestResponse(
+        benchmark_id=benchmark_id,
+        question=item["query"],
+        category=item.get("category", "Unknown"),
+    )
+
+
+@router.post("/evaluate", response_model=EvaluateResponse)
+async def evaluate_answer(request: EvaluateRequest):
+    """
+    Evaluate the Agent's answer against ground truth using the Judge.
+    
+    This is the ONLY place where ground truth is accessed.
+    """
+    benchmark = _load_benchmark()
+    
+    if request.benchmark_id < 0 or request.benchmark_id >= len(benchmark):
+        raise HTTPException(400, "Invalid benchmark_id")
+    
+    item = benchmark[request.benchmark_id]
+    ground_truth = item["answer"]
+    question = item["query"]
+    
+    # Run the DSPy Judge
+    judge = TechnicalJudge()
+    result = await judge.aforward(
+        question=question,
+        ground_truth=ground_truth,
+        agent_answer=request.agent_answer,
+    )
+    
+    return EvaluateResponse(
+        score=result.score,
+        reasoning=result.reasoning,
+        missing_facts=result.missing_facts,
+        incorrect_facts=result.incorrect_facts,
+        ground_truth=ground_truth,  # Optional: show after evaluation
+    )
+
+
+@router.get("/categories")
+async def list_categories():
+    """List available benchmark categories."""
+    benchmark = _load_benchmark()
+    categories = list(set(b.get("category", "Unknown") for b in benchmark))
+    return {"categories": categories, "total": len(benchmark)}
+```
+
+### 10.7 Judge Service (DSPy)
+
+**`api/evaluation/judge.py`:**
+```python
+"""
+DSPy-powered Judge for semantic evaluation of Agent answers.
+
+This module is isolated from the Agent - it only runs during evaluation.
+"""
+
+import dspy
+from typing import List
+
+
+class TechnicalJudgeSignature(dspy.Signature):
+    """
+    Judge if the agent's answer is factually correct compared to ground truth.
+    
+    You are a technical examiner for industrial alarm system documentation.
+    Focus on FACTUAL ACCURACY: specific values (voltages, resistances, jumper pins, terminal numbers).
+    IGNORE stylistic differences (phrasing, formatting, order of information).
+    
+    Scoring guide:
+    - 90-100: All key facts correct, no errors
+    - 70-89: Most facts correct, minor omissions
+    - 50-69: Some facts correct, significant omissions
+    - 30-49: Few facts correct, major errors or omissions
+    - 0-29: Mostly incorrect or irrelevant
+    """
+    
+    question: str = dspy.InputField(desc="The technical question asked")
+    ground_truth: str = dspy.InputField(desc="The verified correct answer from documentation")
+    agent_answer: str = dspy.InputField(desc="The answer generated by the Agent")
+    
+    # Structured outputs
+    score: int = dspy.OutputField(desc="Score 0-100 based on factual accuracy")
+    reasoning: str = dspy.OutputField(desc="Brief explanation of the score (1-2 sentences)")
+    missing_facts: List[str] = dspy.OutputField(desc="Key facts from ground truth missing in agent answer")
+    incorrect_facts: List[str] = dspy.OutputField(desc="Factually incorrect statements in agent answer")
+
+
+class TechnicalJudge(dspy.Module):
+    """
+    Judge module that evaluates Agent answers against ground truth.
+    
+    Uses ChainOfThought for better reasoning on complex technical comparisons.
+    """
+    
+    def __init__(self):
+        super().__init__()
+        self.judge = dspy.ChainOfThought(TechnicalJudgeSignature)
+    
+    def forward(self, question: str, ground_truth: str, agent_answer: str):
+        return self.judge(
+            question=question,
+            ground_truth=ground_truth,
+            agent_answer=agent_answer,
+        )
+    
+    async def aforward(self, question: str, ground_truth: str, agent_answer: str):
+        """Async version for API endpoints."""
+        return await self.judge.acall(
+            question=question,
+            ground_truth=ground_truth,
+            agent_answer=agent_answer,
+        )
+```
+
+### 10.8 Custom Metrics for Batch Evaluation
+
+**`api/evaluation/metrics.py`:**
+```python
+import dspy
+from dspy.evaluate import SemanticF1
+from typing import List, Optional
+
+class PageHitMetric:
+    """Check if expected page appears in retrieved results."""
+    
+    def __init__(self, tolerance: int = 1, top_k: int = 5):
+        self.tolerance = tolerance
+        self.top_k = top_k
+    
+    def __call__(self, example: dspy.Example, pred: dspy.Prediction, trace=None) -> float:
+        expected_page = example.expected_page
+        expected_doc = example.expected_document
+        
+        # Get retrieved pages from prediction
+        retrieved = getattr(pred, 'retrieved_docs', [])[:self.top_k]
+        
+        for rank, doc in enumerate(retrieved, 1):
+            page = doc.get("page_number") or doc.get("page")
+            doc_name = doc.get("document") or doc.get("manual_name")
+            
+            if page and abs(page - expected_page) <= self.tolerance:
+                if doc_name == expected_doc:
+                    return 1.0 / rank  # MRR-style score
+        
+        return 0.0
+
+
+class VisualElementMetric:
+    """Check if visual element (table, figure) was retrieved."""
+    
+    def __call__(self, example: dspy.Example, pred: dspy.Prediction, trace=None) -> bool:
+        expected_visual = example.visual_element.lower() if example.visual_element else None
+        if not expected_visual:
+            return True  # No visual element expected
+        
+        # Check if any retrieved chunk mentions the visual element
+        for doc in getattr(pred, 'retrieved_docs', []):
+            content = doc.get("content", "").lower()
+            if expected_visual in content:
+                return True
+        
+        return False
+
+
+class VSMCombinedMetric:
+    """Combined metric for VSM RAG evaluation."""
+    
+    def __init__(self, page_weight: float = 0.4, semantic_weight: float = 0.4, visual_weight: float = 0.2):
+        self.page_metric = PageHitMetric()
+        self.semantic_metric = SemanticF1(decompositional=True)
+        self.visual_metric = VisualElementMetric()
+        self.page_weight = page_weight
+        self.semantic_weight = semantic_weight
+        self.visual_weight = visual_weight
+    
+    def __call__(self, example: dspy.Example, pred: dspy.Prediction, trace=None) -> float:
+        page_score = self.page_metric(example, pred, trace)
+        semantic_score = self.semantic_metric(example, pred, trace)
+        visual_score = float(self.visual_metric(example, pred, trace))
+        
+        combined = (
+            self.page_weight * page_score +
+            self.semantic_weight * semantic_score +
+            self.visual_weight * visual_score
+        )
+        
+        # For optimization: require all components to pass
+        if trace is not None:
+            return page_score >= 0.5 and semantic_score >= 0.5 and visual_score
+        
+        return combined
+```
+
+### 10.9 Frontend Benchmark Mode
+
+**`frontend/components/BenchmarkMode.tsx`:**
+```tsx
+'use client';
+
+import { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
+
+interface BenchmarkQuestion {
+  benchmark_id: number;
+  question: string;
+  category: string;
+}
+
+interface EvaluationResult {
+  score: number;
+  reasoning: string;
+  missing_facts: string[];
+  incorrect_facts: string[];
+  ground_truth?: string;
+}
+
+interface BenchmarkModeProps {
+  onQuestionSelect: (question: string) => void;
+  agentAnswer: string | null;
+  isAgentDone: boolean;
+}
+
+export function BenchmarkMode({ onQuestionSelect, agentAnswer, isAgentDone }: BenchmarkModeProps) {
+  const [currentQuestion, setCurrentQuestion] = useState<BenchmarkQuestion | null>(null);
+  const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isEvaluating, setIsEvaluating] = useState(false);
+
+  const suggestQuestion = async (category?: string) => {
+    setIsLoading(true);
+    setEvaluation(null);
+    try {
+      const url = category 
+        ? `/api/benchmark/suggest?category=${encodeURIComponent(category)}`
+        : '/api/benchmark/suggest';
+      const res = await fetch(url);
+      const data: BenchmarkQuestion = await res.json();
+      setCurrentQuestion(data);
+      onQuestionSelect(data.question);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const evaluateAnswer = async () => {
+    if (!currentQuestion || !agentAnswer) return;
+    
+    setIsEvaluating(true);
+    try {
+      const res = await fetch('/api/benchmark/evaluate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          benchmark_id: currentQuestion.benchmark_id,
+          agent_answer: agentAnswer,
+        }),
+      });
+      const data: EvaluationResult = await res.json();
+      setEvaluation(data);
+    } finally {
+      setIsEvaluating(false);
+    }
+  };
+
+  const getScoreColor = (score: number) => {
+    if (score >= 80) return 'text-green-600 bg-green-100';
+    if (score >= 60) return 'text-yellow-600 bg-yellow-100';
+    if (score >= 40) return 'text-orange-600 bg-orange-100';
+    return 'text-red-600 bg-red-100';
+  };
+
+  return (
+    <Card className="p-4 mb-6 border-2 border-dashed border-blue-300 bg-blue-50/50">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">🎯</span>
+          <h3 className="font-semibold">Benchmark Mode</h3>
+          <Badge variant="outline">Testing</Badge>
+        </div>
+        <div className="flex gap-2">
+          <Button 
+            size="sm" 
+            variant="outline"
+            onClick={() => suggestQuestion()}
+            disabled={isLoading}
+          >
+            {isLoading ? 'Loading...' : 'Suggest Question'}
+          </Button>
+          <Button 
+            size="sm" 
+            variant="outline"
+            onClick={() => suggestQuestion('Complex Problem')}
+            disabled={isLoading}
+          >
+            Complex
+          </Button>
+          <Button 
+            size="sm" 
+            variant="outline"
+            onClick={() => suggestQuestion('Direct Question')}
+            disabled={isLoading}
+          >
+            Direct
+          </Button>
+        </div>
+      </div>
+
+      {currentQuestion && (
+        <div className="mb-4 p-3 bg-white rounded border">
+          <div className="flex items-center gap-2 mb-2">
+            <Badge>{currentQuestion.category}</Badge>
+            <span className="text-xs text-muted-foreground">
+              ID: {currentQuestion.benchmark_id}
+            </span>
+          </div>
+          <p className="text-sm">{currentQuestion.question}</p>
+        </div>
+      )}
+
+      {isAgentDone && agentAnswer && !evaluation && (
+        <Button 
+          onClick={evaluateAnswer}
+          disabled={isEvaluating}
+          className="w-full"
+        >
+          {isEvaluating ? 'Evaluating...' : '📊 Evaluate Agent Answer'}
+        </Button>
+      )}
+
+      {evaluation && (
+        <div className="mt-4 p-4 bg-white rounded border">
+          <div className="flex items-center justify-between mb-3">
+            <span className="font-medium">Evaluation Result</span>
+            <span className={`text-2xl font-bold px-3 py-1 rounded ${getScoreColor(evaluation.score)}`}>
+              {evaluation.score}/100
+            </span>
+          </div>
+          
+          <p className="text-sm text-muted-foreground mb-3">{evaluation.reasoning}</p>
+          
+          {evaluation.missing_facts.length > 0 && (
+            <div className="mb-2">
+              <span className="text-xs font-medium text-orange-600">Missing Facts:</span>
+              <ul className="text-xs text-muted-foreground ml-4 list-disc">
+                {evaluation.missing_facts.map((fact, i) => (
+                  <li key={i}>{fact}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          
+          {evaluation.incorrect_facts.length > 0 && (
+            <div className="mb-2">
+              <span className="text-xs font-medium text-red-600">Incorrect Facts:</span>
+              <ul className="text-xs text-muted-foreground ml-4 list-disc">
+                {evaluation.incorrect_facts.map((fact, i) => (
+                  <li key={i}>{fact}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          
+          {evaluation.ground_truth && (
+            <details className="mt-3">
+              <summary className="text-xs cursor-pointer text-blue-600">Show Ground Truth</summary>
+              <p className="text-xs mt-2 p-2 bg-gray-50 rounded">{evaluation.ground_truth}</p>
+            </details>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+```
+
+### 10.10 Devset Loader (for batch evaluation)
+
+**`api/evaluation/devset.py`:**
+```python
+import json
+import dspy
+from pathlib import Path
+from typing import List
+
+DOC_NAME_MAP = {
+    "techman.pdf": "Technical Manual",
+    "uk_firmware.pdf": "UK Firmware Manual",
+}
+
+def load_benchmark(path: str = "data/benchmarks/benchmarksv03.json") -> List[dspy.Example]:
+    """Load benchmark as DSPy Examples."""
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    
+    examples = []
+    for item in data:
+        evidence = item.get("evidence", {})
+        locations = evidence.get("locations", [{}])
+        
+        example = dspy.Example(
+            # Inputs
+            question=item["query"],
+            category=item.get("category", "Unknown"),
+            
+            # Expected outputs (for metrics)
+            expected_answer=item["answer"],
+            expected_document=DOC_NAME_MAP.get(evidence.get("document"), evidence.get("document")),
+            expected_page=int(locations[0].get("page", 0)) if locations else 0,
+            expected_chapter=locations[0].get("chapter") if locations else None,
+            expected_section=evidence.get("section"),
+            visual_element=evidence.get("visual_element"),
+        ).with_inputs("question", "category")
+        
+        examples.append(example)
+    
+    return examples
+
+def split_devset(examples: List[dspy.Example], train_ratio: float = 0.7):
+    """Split examples into train and dev sets."""
+    split_idx = int(len(examples) * train_ratio)
+    return examples[:split_idx], examples[split_idx:]
+```
+
+### 10.14 VSM Evaluator (Batch)
+
+**`api/evaluation/evaluator.py`:**
+```python
+import dspy
+from dspy.evaluate import Evaluate
+from typing import Optional, Dict, Any
+import mlflow
+
+from .metrics import VSMCombinedMetric, PageHitMetric
+from .devset import load_benchmark
+
+class VSMEvaluator:
+    """Wrapper for DSPy evaluation with MLflow tracking."""
+    
+    def __init__(
+        self,
+        benchmark_path: str = "data/benchmarks/benchmarksv03.json",
+        metric: Optional[Any] = None,
+        num_threads: int = 8,
+        mlflow_experiment: str = "vsm-rag-evaluation"
+    ):
+        self.devset = load_benchmark(benchmark_path)
+        self.metric = metric or VSMCombinedMetric()
+        self.num_threads = num_threads
+        self.mlflow_experiment = mlflow_experiment
+        
+        self.evaluator = Evaluate(
+            devset=self.devset,
+            metric=self.metric,
+            num_threads=num_threads,
+            display_progress=True,
+            display_table=5
+        )
+    
+    def evaluate(self, program: dspy.Module, run_name: str = "evaluation") -> Dict[str, Any]:
+        """Run evaluation with MLflow tracking."""
+        mlflow.set_experiment(self.mlflow_experiment)
+        
+        with mlflow.start_run(run_name=run_name):
+            result = self.evaluator(program)
+            
+            # Log metrics
+            mlflow.log_metric("combined_score", result)
+            
+            # Log per-category breakdown
+            category_scores = self._compute_category_scores(program)
+            for category, score in category_scores.items():
+                mlflow.log_metric(f"score_{category.lower().replace(' ', '_')}", score)
+            
+            return {
+                "score": result,
+                "category_scores": category_scores,
+                "devset_size": len(self.devset),
+            }
+    
+    def _compute_category_scores(self, program: dspy.Module) -> Dict[str, float]:
+        """Compute scores broken down by question category."""
+        categories = {}
+        for example in self.devset:
+            cat = example.category
+            if cat not in categories:
+                categories[cat] = {"scores": [], "count": 0}
+            
+            pred = program(**example.inputs())
+            score = self.metric(example, pred)
+            categories[cat]["scores"].append(score)
+            categories[cat]["count"] += 1
+        
+        return {
+            cat: sum(data["scores"]) / data["count"]
+            for cat, data in categories.items()
+        }
+```
+
+### 10.11 Implementation Phases (Benchmarking)
+
+**Phase B1: Judge Service (LOW RISK)**
+- [ ] Create `api/evaluation/__init__.py`
+- [ ] Create `api/evaluation/judge.py` (TechnicalJudge DSPy Signature)
+- [ ] Test Judge with sample inputs
+- [ ] Verify structured output (score, reasoning, facts)
+
+**Phase B2: Benchmark API (LOW RISK)**
+- [ ] Create `api/endpoints/benchmark.py`
+- [ ] Implement `/benchmark/suggest` (returns question only, NO answer)
+- [ ] Implement `/benchmark/evaluate` (calls Judge)
+- [ ] Implement `/benchmark/categories`
+- [ ] Register router in `main.py`
+
+**Phase B3: Frontend Benchmark Mode (MEDIUM RISK)**
+- [ ] Create `frontend/components/BenchmarkMode.tsx`
+- [ ] Add "Benchmark Mode" toggle to header (next to "Agentic Mode")
+- [ ] Wire up "Suggest Question" → search bar
+- [ ] Wire up "Evaluate" → display score card
+- [ ] Style evaluation results (score color, facts lists)
+
+**Phase B4: Batch Evaluation (MEDIUM RISK)**
+- [ ] Create `api/evaluation/devset.py` (load as dspy.Example)
+- [ ] Create `api/evaluation/metrics.py` (PageHit, Visual, Combined)
+- [ ] Create `api/evaluation/evaluator.py` (VSMEvaluator)
+- [ ] Update `scripts/run_benchmark.py` to use DSPy evaluation
+
+**Phase B5: Optimization Loop (AFTER DSPy Migration)**
+- [ ] Create `scripts/run_optimization.py`
+- [ ] Run MIPROv2 on benchmark
+- [ ] Compare optimized vs baseline
+- [ ] Save optimized prompts
+
+### 10.12 What We're Reusing vs. Not Using
+
+**From `docs/BENCHMARK_SYSTEM_DESIGN.md`:**
+
+| Concept | Status | Notes |
+|---------|--------|-------|
+| "Blind Agent & Judge" architecture | ✅ REUSE | Core pattern - Agent never sees answers |
+| Frontend "Benchmark Mode" | ✅ REUSE | Toggle, Suggest, Evaluate buttons |
+| "Suggest Question" flow | ✅ REUSE | Returns question only, strips answer |
+| "Evaluate" button flow | ✅ REUSE | Sends agent answer to Judge |
+| Score (0-100) display | ✅ REUSE | With color coding |
+| Judge prompt engineering | ❌ REPLACED | DSPy Signature handles this automatically |
+| Manual JSON parsing | ❌ REPLACED | DSPy structured outputs |
+| "Is gpt-oss overkill?" question | ✅ RESOLVED | Use same model, DSPy can optimize |
+| Visual evidence evaluation | ⏳ DEFERRED | Start with text-only, add later |
+| Async vs blocking | ✅ RESOLVED | Use async (DSPy supports it) |
+
+**New from DSPy:**
+
+| Feature | Benefit |
+|---------|---------|
+| `TechnicalJudgeSignature` | Type-safe, structured output (score, reasoning, facts) |
+| `dspy.ChainOfThought` | Better reasoning for complex comparisons |
+| `SemanticF1` metric | Built-in semantic similarity for batch eval |
+| `dspy.Evaluate` | Parallel batch evaluation with progress |
+| `MIPROv2` optimizer | Can improve Judge prompts automatically |
+
+### 10.13 Benchmark Success Criteria
+
+| Metric | Current | Target (Post-DSPy) |
+|--------|---------|-------------------|
+| Hit@1 | TBD | ≥70% |
+| Hit@3 | TBD | ≥85% |
+| SemanticF1 | TBD | ≥0.7 |
+| Visual Element Hit | TBD | ≥80% |
+| Complex Problem Accuracy | TBD | ≥60% |
+| Direct Question Accuracy | TBD | ≥80% |
+| Judge Consistency | N/A | ≥90% (same score on repeated eval) |
+
+---
+
+## 11. Rollback Plan
 
 If DSPy migration causes issues:
 1. Keep old `DecisionPromptBuilder` until new approach is validated
 2. Feature flag to switch between old/new decision logic
 3. Knowledge module (Atlas) can be used independently of DSPy
 4. Environment + tasks_completed enhancements work without DSPy
+5. Benchmark evaluation can use DSPy metrics without migrating agent
 

@@ -19,8 +19,12 @@ from collections import defaultdict
 
 # Document name mapping from benchmark to Weaviate collection
 DOC_NAME_MAP = {
+    # Old format (benchmark.json)
     "91001002 Techman": "Technical Manual",
     "92002703 Bedienung UK": "UK Firmware Manual",
+    # New format (benchmarksv03.json)
+    "techman.pdf": "Technical Manual",
+    "uk_firmware.pdf": "UK Firmware Manual",
 }
 
 BASE_URL = "http://localhost:8001"
@@ -167,10 +171,22 @@ def run_benchmark(benchmark_path: str, tolerance: int = 1, output_path: Optional
     results: List[BenchmarkResult] = []
     
     # Process each question
-    for item in benchmark:
-        q_id = item.get("id")
-        question = item.get("question")
+    for idx, item in enumerate(benchmark):
+        # Support both old (benchmark.json) and new (benchmarksv03.json) formats
+        q_id = item.get("id", idx + 1)
+        question = item.get("question") or item.get("query")
+        
+        # Handle both reference formats
         ref = item.get("reference", {})
+        evidence = item.get("evidence", {})
+        
+        if evidence:
+            # New format (benchmarksv03.json)
+            expected_doc = evidence.get("document")
+            locations = evidence.get("locations", [{}])
+            expected_page = int(locations[0].get("page", 0)) if locations else 0
+        else:
+            # Old format (benchmark.json)
         expected_doc = ref.get("document")
         expected_page = ref.get("page")
         
@@ -323,7 +339,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run RAG benchmark evaluation")
     parser.add_argument(
         "--benchmark",
-        default="data/benchmarks/benchmark.json",
+        default="data/benchmarks/benchmarksv03.json",
         help="Path to benchmark JSON file"
     )
     parser.add_argument(

@@ -1,6 +1,6 @@
 # VSM Demo v02 - System Architecture
 
-**Last Updated:** 2025-11-25
+**Last Updated:** 2025-11-26
 
 This document provides the authoritative, up-to-date architecture overview of the VSM Demo v02 system.
 
@@ -145,28 +145,86 @@ User Query → Agent (rule-based)
            → Stream NDJSON to frontend
 ```
 
-### Search Flow (Target - LLM Agent)
+### Search Flow (Target - DSPy Agent)
 
 ```
-User Query → Decision Agent (gpt-oss-120B)
+User Query → TreeData (Central State)
            │
-           ├─[text query]→ FastVectorSearchTool
-           │               └→ Result(objects, llm_message) → Environment
+           │  ┌─────────────────────────────────────────────┐
+           │  │ TreeData contains:                          │
+           │  │ - user_prompt                               │
+           │  │ - atlas (ThorGuard knowledge)               │
+           │  │ - environment (accumulated results)         │
+           │  │ - tasks_completed (train of thought)        │
+           │  │ - errors (for self-healing)                 │
+           │  └─────────────────────────────────────────────┘
            │
-           ├─[visual query]→ ColQwenSearchTool
-           │                 └→ Result(pages, llm_message) → Environment
-           │                     │
-           │                     └→ VisualInterpretationTool (Qwen3-VL)
-           │                         └→ Result(interpretation) → Environment
+           ▼
+    VSMChainOfThought(DecisionSignature)
+           │  AUTO-INJECTS: user_prompt, atlas, environment, tasks_completed
            │
-           └─[has results]→ TextResponseTool
-                            └→ Streaming response to frontend
+           ▼
+    Decision: tool_name, tool_inputs, should_end, reasoning
+           │
+           ├─[fast_vector_search]→ FastVectorSearchTool
+           │                       └→ Result → environment.add() + tasks_completed.append()
+           │
+           ├─[colqwen_search]→ ColQwenSearchTool
+           │                   └→ Result → environment.add() + tasks_completed.append()
+           │
+           ├─[visual_interpretation]→ VisualInterpretationTool (Qwen3-VL)
+           │                          └→ Result → environment.add() + tasks_completed.append()
+           │
+           └─[text_response]→ TextResponseTool (DSPy Signature)
+                              └→ Streaming response with source citations
 ```
 
-**Key patterns:** 
-- Environment accumulates results across tool calls
-- Each Result has `llm_message` for decision agent context
-- Tools expose `is_tool_available` for conditional routing
+**Key patterns (DSPy):** 
+- TreeData is central state passed to ALL decisions
+- VSMChainOfThought auto-injects context into any signature
+- Environment accumulates results with `_REF_ID` for LLM reference
+- `tasks_completed` provides train of thought for multi-step reasoning
+- Atlas provides domain knowledge (ThorGuard manual descriptions)
+
+### Benchmark Flow (Target - Interactive Evaluation)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         FRONTEND (Benchmark Mode)                        │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐  │
+│  │ "Suggest        │  │ Run Agentic     │  │ "Evaluate" Button       │  │
+│  │  Question"      │  │ Search          │  │ (after response)        │  │
+│  └────────┬────────┘  └────────┬────────┘  └────────────┬────────────┘  │
+└───────────┼────────────────────┼───────────────────────┼────────────────┘
+            │                    │                       │
+            ▼                    ▼                       ▼
+┌───────────────────┐  ┌─────────────────────┐  ┌─────────────────────────┐
+│  GET /benchmark/  │  │  GET /agentic_      │  │  POST /benchmark/       │
+│  suggest          │  │  search?query=...   │  │  evaluate               │
+│                   │  │                     │  │                         │
+│  Returns:         │  │  Agent is BLIND     │  │  Input:                 │
+│  - question       │  │  (no access to      │  │  - benchmark_id         │
+│  - benchmark_id   │  │   benchmark file)   │  │  - agent_answer         │
+│  - category       │  │                     │  │                         │
+│  (NO answer!)     │  │                     │  │  TechnicalJudge (DSPy)  │
+│                   │  │                     │  │  compares to ground     │
+│                   │  │                     │  │  truth                  │
+└───────────────────┘  └─────────────────────┘  └─────────────────────────┘
+                                                          │
+                                                          ▼
+                                               ┌─────────────────────────┐
+                                               │  Returns:               │
+                                               │  - score (0-100)        │
+                                               │  - reasoning            │
+                                               │  - missing_facts[]      │
+                                               │  - incorrect_facts[]    │
+                                               └─────────────────────────┘
+```
+
+**Key patterns (Benchmark):**
+- Agent never sees benchmark answers (data leakage prevention)
+- TechnicalJudge uses DSPy for structured semantic evaluation
+- Frontend displays score with color coding and detailed feedback
 
 ---
 
@@ -181,6 +239,14 @@ User Query → Decision Agent (gpt-oss-120B)
 | `/healthz` | GET | Health check |
 | `/static/manuals/*.pdf` | GET | PDF files |
 | `/static/previews/*/page-*.png` | GET | Preview images |
+
+### Benchmark Endpoints (Planned)
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/benchmark/suggest` | GET | Get random benchmark question (no answer) |
+| `/benchmark/evaluate` | POST | Evaluate agent answer with Judge |
+| `/benchmark/categories` | GET | List available question categories |
 
 **Documentation:** Auto-generated Swagger at `http://localhost:8001/docs`
 
@@ -274,13 +340,25 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8001
 - [x] `Result`/`Error`/`Response`/`Status` schemas
 - [x] Agent refactored to decision tree pattern
 
-### 🚧 In Progress (Phase 4: LLM Integration)
+### 📋 Planned (Phase 4: DSPy Migration)
 
-- [ ] gpt-oss-120B via Ollama for decision agent
-- [ ] Replace rule-based routing with LLM decisions
-- [ ] Implement `TextResponseTool` with real generation
+> **Full plan:** `PLAN_DSPY_MIGRATION.md` | **Tasks:** `TODO.md`
 
-### 📋 Future (Phase 5: Visual Interpretation)
+- [ ] DSPy Signatures for structured prompts
+- [ ] Atlas (agent identity + knowledge context)
+- [ ] Enhanced TreeData with `tasks_completed`
+- [ ] VSMChainOfThought (auto context injection)
+- [ ] Replace `DecisionPromptBuilder` with DSPy
+
+### 📋 Planned (Phase 5: Interactive Benchmarking)
+
+- [ ] TechnicalJudge (DSPy LLM-as-Judge)
+- [ ] Benchmark API (`/benchmark/suggest`, `/benchmark/evaluate`)
+- [ ] Frontend Benchmark Mode
+- [ ] Batch evaluation with custom metrics
+- [ ] MIPROv2 optimization loop
+
+### 📋 Future (Phase 6: Visual Interpretation)
 
 - [ ] Qwen3-VL-8B via MLX for page interpretation
 - [ ] `VisualInterpretationTool` after ColQwen search
@@ -429,6 +507,6 @@ For questions or issues:
 
 ---
 
-**Version:** 1.0  
-**Last Updated:** 2025-11-25  
+**Version:** 1.1  
+**Last Updated:** 2025-11-26  
 **Maintainer:** Lab Team
