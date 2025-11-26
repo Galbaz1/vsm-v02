@@ -272,11 +272,14 @@ You must respond with a valid JSON object containing:
 - "should_end": true if this is the final response, false otherwise
 
 Guidelines:
-1. For visual content (diagrams, schematics, charts): Use colqwen_search
-2. For factual text queries (specs, procedures): Use fast_vector_search
-3. For complex queries needing both: Use hybrid_search
-4. When you have enough information: Use text_response to answer
-5. If the environment has a lot of data: Consider using summarize first
+1. For queries about tables, bit codes, status displays, menus, or specifications: Use hybrid_search (finds both text AND visual layout)
+2. For explicit visual requests (diagrams, schematics, "show me", figures): Use colqwen_search
+3. For simple definitions or short procedures: Use fast_vector_search
+4. For complex or technical queries: Use hybrid_search (it runs in parallel, so it's efficient)
+5. When you have enough information: Use text_response to answer
+6. If the environment has lots of data: Consider using summarize first
+
+PREFER hybrid_search for most technical queries - it finds both text AND visual content efficiently (runs in parallel).
 
 Current iteration: {iteration_status}
 """
@@ -329,9 +332,10 @@ What tool should I use next? Respond with JSON only."""
         env_context = tree_data.environment.to_llm_context(max_tokens=4000)
         
         error_context = ""
-        if tree_data.errors:
+        errors = tree_data.get_errors()  # Returns flattened list from Dict
+        if errors:
             error_context = "Previous errors (try to recover):\n" + "\n".join(
-                f"- {err}" for err in tree_data.errors[-3:]  # Last 3 errors
+                f"- {err}" for err in errors[-3:]  # Last 3 errors
             )
         
         user_content = cls.USER_TEMPLATE.format(

@@ -4,8 +4,9 @@ Search tools for VSM agentic RAG.
 Wraps existing search services (fast vector, ColQwen) as Elysia-style tools.
 """
 
+import asyncio
 import time
-from typing import Any, AsyncGenerator, Dict, Tuple, TYPE_CHECKING
+from typing import Any, AsyncGenerator, Dict, List, Tuple, TYPE_CHECKING
 
 from api.services.tools.base import Tool
 from api.schemas.agent import Result, Error, Status
@@ -273,6 +274,7 @@ class HybridSearchTool(Tool):
     """
     Hybrid search that combines fast vector and ColQwen results.
     
+    Runs both searches IN PARALLEL for optimal performance.
     Useful for complex queries that need both text and visual context.
     """
     
@@ -280,9 +282,10 @@ class HybridSearchTool(Tool):
         super().__init__(
             name="hybrid_search",
             description=(
-                "Perform both text and visual search, combining results. "
-                "Use for complex queries that may benefit from both text chunks "
-                "and relevant page images. Returns merged results from both pipelines."
+                "Perform both text and visual search IN PARALLEL, combining results. "
+                "Use for complex queries, tables, specifications, or any query that may "
+                "benefit from both text chunks and relevant page images. "
+                "Efficient: runs both pipelines simultaneously."
             ),
             status="Performing hybrid search...",
             inputs={
@@ -316,40 +319,51 @@ class HybridSearchTool(Tool):
             "PDFDocuments" in tree_data.collection_names
         )
     
+    async def _collect_results(
+        self,
+        tool: Tool,
+        tree_data: "TreeData",
+        inputs: Dict[str, Any],
+    ) -> Tuple[List[Dict], List[str]]:
+        """Helper to collect all results from a tool (for parallel execution)."""
+        results = []
+        errors = []
+        async for output in tool(tree_data, inputs):
+            if isinstance(output, Result):
+                results = output.objects
+            elif isinstance(output, Error):
+                errors.append(output.message)
+        return results, errors
+    
     async def __call__(
         self,
         tree_data: "TreeData",
         inputs: Dict[str, Any],
         **kwargs,
     ) -> AsyncGenerator[Any, None]:
-        """Execute hybrid search."""
+        """Execute hybrid search with PARALLEL execution."""
         query = inputs.get("query", tree_data.user_prompt)
         text_limit = inputs.get("text_limit", 3)
         visual_limit = inputs.get("visual_limit", 2)
         
-        yield Status("Running hybrid search (text + visual)...")
+        yield Status("Running hybrid search (text + visual in parallel)...")
         
-        # Run both searches
+        start_time = time.time()
+        
+        # Create tool instances
         fast_tool = FastVectorSearchTool()
         colqwen_tool = ColQwenSearchTool()
         
-        text_results = []
-        visual_results = []
-        errors = []
+        # Run BOTH searches in parallel using asyncio.gather
+        (text_results, text_errors), (visual_results, visual_errors) = await asyncio.gather(
+            self._collect_results(fast_tool, tree_data, {"query": query, "limit": text_limit}),
+            self._collect_results(colqwen_tool, tree_data, {"query": query, "top_k": visual_limit}),
+        )
         
-        # Fast vector search
-        async for output in fast_tool(tree_data, {"query": query, "limit": text_limit}):
-            if isinstance(output, Result):
-                text_results = output.objects
-            elif isinstance(output, Error):
-                errors.append(f"Text: {output.message}")
+        elapsed_ms = int((time.time() - start_time) * 1000)
         
-        # ColQwen search
-        async for output in colqwen_tool(tree_data, {"query": query, "top_k": visual_limit}):
-            if isinstance(output, Result):
-                visual_results = output.objects
-            elif isinstance(output, Error):
-                errors.append(f"Visual: {output.message}")
+        # Combine errors
+        errors = [f"Text: {e}" for e in text_errors] + [f"Visual: {e}" for e in visual_errors]
         
         if not text_results and not visual_results:
             yield Error(
@@ -371,12 +385,14 @@ class HybridSearchTool(Tool):
                 "query": query,
                 "text_count": len(text_results),
                 "visual_count": len(visual_results),
+                "time_ms": elapsed_ms,
+                "parallel": True,
                 "errors": errors if errors else None,
             },
             name="hybrid_search",
             llm_message=(
                 f"Hybrid search found {len(text_results)} text chunks "
-                f"and {len(visual_results)} relevant pages."
+                f"and {len(visual_results)} relevant pages in {elapsed_ms}ms (parallel)."
             ),
         )
 

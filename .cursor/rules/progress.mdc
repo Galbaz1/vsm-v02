@@ -9,6 +9,8 @@ alwaysApply: true
 
 | Date | Issue | Fix | File |
 |------|-------|-----|------|
+| 2025-11-26 | Hybrid search was sequential (slow) | Made parallel with asyncio.gather() | `api/services/tools/search_tools.py` |
+| 2025-11-26 | LLM rarely chose hybrid_search | Updated prompt to prefer hybrid for tables/complex queries | `api/services/llm.py` |
 | 2024-11-26 | Table content stripped during ingestion | Fixed regex order in clean_content() | `scripts/weaviate_ingest_manual.py` |
 | 2024-11-26 | Vector search missed tables | Changed to hybrid search (vector + BM25) | `api/services/search.py` |
 | 2024-11-26 | LLM filtered by chunk_type="text" | Removed chunk_type param from tool | `api/services/tools/search_tools.py` |
