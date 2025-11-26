@@ -2,7 +2,7 @@
 
 **Created:** 2025-11-26  
 **Plan Reference:** `PLAN_DSPY_MIGRATION.md`  
-**Status:** 🟡 Planning Complete, Implementation Not Started
+**Status:** 🟢 Phase 0-2 Complete, Ready for Phase 3
 
 ---
 
@@ -12,65 +12,220 @@ This TODO tracks the DSPy migration and interactive benchmarking system implemen
 
 ---
 
-## Phase 0: Prerequisites & Setup
-> **Risk:** LOW | **Effort:** 1 hour | **Dependencies:** None
+## Phase 0: Prerequisites & Setup ✅
+> **Risk:** LOW | **Effort:** 1 hour | **Dependencies:** None | **Completed:** 2025-11-26
 
 ### 0.1 Environment Setup
-- [ ] Add `dspy-ai` to `requirements.txt`
-- [ ] Add `mlflow` to `requirements.txt` (optional, for experiment tracking)
-- [ ] Run `pip install -r requirements.txt` in `vsm-hva` conda env
-- [ ] Verify DSPy import works: `python -c "import dspy; print(dspy.__version__)"`
+- [x] Add `dspy-ai` to `requirements.txt`
+- [x] Add `mlflow` to `requirements.txt` (optional, for experiment tracking)
+- [x] Run `pip install -r requirements.txt` in `vsm-hva` conda env
+- [x] Verify DSPy import works: `python -c "import dspy; print(dspy.__version__)"`
 
 ### 0.2 DSPy + Ollama Configuration
-- [ ] Create `api/core/dspy_config.py` with Ollama LM setup
-- [ ] Test DSPy → Ollama connection with simple signature
-- [ ] Verify async support works (`acall`)
+- [x] Create `api/core/dspy_config.py` with Ollama LM setup
+- [x] Test DSPy → Ollama connection with simple signature
+- [x] Verify async support works (`acall`)
 
 **Test:** `python -c "import dspy; lm = dspy.LM('ollama_chat/gpt-oss:120b', api_base='http://localhost:11434'); dspy.configure(lm=lm); print('OK')"`
 
 ---
 
-## Phase 1: Knowledge Module (Atlas)
-> **Risk:** LOW | **Effort:** 2-3 hours | **Dependencies:** Phase 0
+## Phase 1: Knowledge Module (Atlas) ✅
+> **Risk:** LOW | **Effort:** 2-3 hours | **Dependencies:** Phase 0 | **Completed:** 2025-11-26
 
 ### 1.1 Create Atlas Class
-- [ ] Create `api/knowledge/__init__.py` with `Atlas` Pydantic model
-- [ ] Fields: `style`, `agent_description`, `end_goal`, `datetime_reference`
-- [ ] Copy pattern from Elysia: `docs/elysia-source-code-for-reference-only/elysia/tree/objects.py:354-375`
+- [x] Create `api/knowledge/__init__.py` with `Atlas` Pydantic model
+- [x] Fields: `style`, `agent_description`, `end_goal`, `datetime_reference`
+- [x] Copy pattern from Elysia: `docs/elysia-source-code-for-reference-only/elysia/tree/objects.py:354-375`
 
 ### 1.2 Create ThorGuard Knowledge
-- [ ] Create `api/knowledge/thorguard.py`
-- [ ] Define `AGENT_DESCRIPTION` with:
+- [x] Create `api/knowledge/thorguard.py`
+- [x] Define `AGENT_DESCRIPTION` with:
   - Technical Manual description (audience, topics, use cases)
   - Users Manual description (audience, topics, use cases)
   - Search strategy guidance
-- [ ] Create `get_atlas()` factory function
+- [x] Create `get_atlas()` factory function
 
 **Test:** `python -c "from api.knowledge import get_atlas; a = get_atlas(); print(a.agent_description[:100])"`
 
 ---
 
-## Phase 2: Enhanced Environment & TreeData
-> **Risk:** MEDIUM | **Effort:** 4-6 hours | **Dependencies:** Phase 1
+## Phase 2: Enhanced Environment & TreeData ✅
+> **Risk:** MEDIUM | **Effort:** 4-6 hours | **Dependencies:** Phase 1 | **Completed:** 2025-11-26
 
-### 2.1 Enhance Environment Class
-- [ ] Add `hidden_environment: Dict[str, Any]` for cross-tool data
-- [ ] Add `_REF_ID` auto-assignment in `add()` method
-- [ ] Add `is_empty()` method
-- [ ] Update `__str__` to format for LLM consumption
+### Current State Analysis
+The current implementation in `api/services/environment.py` already has:
+- ✅ `Environment.hidden_environment` - already implemented (lines 67-77)
+- ✅ `Environment.is_empty()` - already implemented (lines 79-85)
+- ✅ `Environment._REF_ID` auto-assignment - already implemented in `add_objects()` (lines 127-131)
+- ✅ `TreeData.atlas` field - already implemented (line 291)
+- ✅ `TreeData.tasks_completed` - restructured to rich format
 
-### 2.2 Enhance TreeData Class
-- [ ] Add `tasks_completed: List[Dict]` field
-- [ ] Add `atlas: Atlas` field
-- [ ] Add `update_tasks_completed(task, reasoning, inputs, parsed_info)` method
-- [ ] Add `tasks_completed_string()` method for LLM formatting
-- [ ] Add `current_tool: str` for error context
+**What's MISSING** (compared to Elysia pattern at `docs/elysia-source-code-for-reference-only/elysia/tree/objects.py:685-798`):
 
-### 2.3 Wire Up Atlas
-- [ ] Modify TreeData initialization to accept Atlas
-- [ ] Update `AgentService.run()` to create TreeData with Atlas
+### 2.1 Restructure `tasks_completed` Format
+- [x] Change `tasks_completed` from `Dict[str, List[float]]` to `List[Dict]` format
+- [x] New format should match Elysia structure:
+  ```python
+  [
+      {
+          "prompt": str,  # The user prompt this task was for
+          "task": [
+              {
+                  "task": str,           # Tool name
+                  "iteration": int,      # Which iteration
+                  "reasoning": str,      # Why this tool was chosen
+                  "inputs": dict,        # Tool inputs used
+                  "llm_message": str,    # Output message for context
+                  "action": bool,        # True if action tool, False if subcategory
+                  "error": bool,         # True if task errored
+              },
+              ...
+          ]
+      },
+      ...
+  ]
+  ```
 
-**Test:** Manual test with mock data - verify `tasks_completed_string()` output format matches Elysia pattern.
+**Reference:** Elysia `update_tasks_completed()` at lines 685-742
+
+### 2.2 Add `update_tasks_completed()` Method
+- [x] Implement `update_tasks_completed(prompt, task, num_iterations, **kwargs)` method
+- [x] Handle three cases:
+  1. New prompt - create new entry
+  2. Existing prompt, new task - append to task list
+  3. Existing prompt, existing task - update with kwargs
+- [x] Support kwargs: `reasoning`, `inputs`, `llm_message`, `action`, `error`
+
+**Elysia Pattern:**
+```python
+def update_tasks_completed(self, prompt: str, task: str, num_trees_completed: int, **kwargs):
+    # Search for existing prompt entry
+    prompt_found = False
+    task_found = False
+    # ... (see elysia/tree/objects.py:685-742)
+```
+
+### 2.3 Add `tasks_completed_string()` Method
+- [x] Implement `tasks_completed_string()` method for LLM consumption
+- [x] Format output with XML-like tags for structure:
+  ```
+  <prompt_1>
+  Prompt: {user_prompt}
+  <task_1>
+  Chosen action: {task_name} (SUCCESSFUL/UNSUCCESSFUL)
+  Reasoning: {reasoning}
+  Inputs: {inputs}
+  LLM Message: {llm_message}
+  </task_1>
+  </prompt_1>
+  ```
+
+**Reference:** Elysia `tasks_completed_string()` at lines 759-798
+
+### 2.4 Add `current_tool` Field for Error Context
+- [x] Add `current_tool: Optional[str] = None` field to TreeData
+- [x] Add `set_current_tool(task: str)` method
+- [x] Modify `get_errors()` to filter by current tool (for self-healing)
+- [x] Update error structure from `List[str]` to `Dict[str, List[str]]`
+
+**Reference:** Elysia pattern at lines 744-757
+
+### 2.5 Wire Up Atlas in Agent
+- [x] Update `AgentOrchestrator.run()` (line 364) to pass Atlas to TreeData:
+  ```python
+  from api.knowledge.thorguard import get_atlas
+  
+  tree_data = TreeData(
+      user_prompt=user_prompt,
+      environment=Environment(),
+      conversation_history=conversation_history or [],
+      collection_names=self.collection_names,
+      max_iterations=self.max_iterations,
+      atlas=get_atlas(),  # ADD THIS
+  )
+  ```
+
+### 2.6 Update `_execute_tool()` to Track Tasks
+- [x] Modify `_execute_tool()` (line 290) to call `update_tasks_completed()`:
+  ```python
+  # After successful tool execution
+  tree_data.update_tasks_completed(
+      prompt=tree_data.user_prompt,
+      task=tool.name,
+      num_iterations=tree_data.num_iterations,
+      reasoning=decision.reasoning if hasattr(decision, 'reasoning') else "",
+      inputs=inputs,
+      llm_message=result.llm_message if hasattr(result, 'llm_message') else "",
+      action=True,
+      error=not successful,
+  )
+  ```
+
+### 2.7 Update Serialization
+- [x] Update `TreeData.to_json()` to handle new `tasks_completed` format
+- [x] Update `TreeData.from_json()` to deserialize correctly (with backwards compatibility)
+
+---
+
+### DSPy Integration Notes
+
+From `docs/dspy_generated_llms.txt`, key concepts for Phase 2:
+
+1. **Module Pattern** (lines 199-211): TreeData will be passed to DSPy modules
+2. **ChainOfThought** (lines 24, 360-368): Will use `tasks_completed_string()` for context
+3. **Streaming** (lines 21, 330-352): Ensure updates work with async generators
+
+### Elysia Patterns Used
+
+| Pattern | Elysia Location | VSM Implementation |
+|---------|-----------------|-------------------|
+| `tasks_completed` structure | lines 616-619 | `TreeData.tasks_completed` |
+| `update_tasks_completed()` | lines 685-742 | New method |
+| `tasks_completed_string()` | lines 759-798 | New method |
+| `current_task` + error filtering | lines 744-757 | New field + method |
+| `tree_count_string()` | lines 808-814 | Existing `iteration_status()` ✅ |
+
+### Implementation Order
+
+1. **Step 1:** Restructure `tasks_completed` type definition
+2. **Step 2:** Add `update_tasks_completed()` method
+3. **Step 3:** Add `tasks_completed_string()` method  
+4. **Step 4:** Add `current_tool` and error filtering
+5. **Step 5:** Wire Atlas in agent
+6. **Step 6:** Update `_execute_tool()` to track tasks
+7. **Step 7:** Update serialization methods
+8. **Step 8:** Test with mock data
+
+---
+
+**Test Cases:**
+```bash
+# Test 1: tasks_completed structure
+python -c "
+from api.services.environment import TreeData
+td = TreeData(user_prompt='test')
+td.update_tasks_completed('test', 'fast_vector_search', 1, reasoning='test reason', inputs={'query': 'test'})
+print(td.tasks_completed)
+"
+
+# Test 2: tasks_completed_string output
+python -c "
+from api.services.environment import TreeData
+td = TreeData(user_prompt='test')
+td.update_tasks_completed('test', 'fast_vector_search', 1, reasoning='found docs', llm_message='Found 5 results')
+print(td.tasks_completed_string())
+"
+
+# Test 3: Atlas integration
+python -c "
+from api.knowledge.thorguard import get_atlas
+from api.services.environment import TreeData
+atlas = get_atlas()
+td = TreeData(user_prompt='test', atlas=atlas)
+print(f'Atlas loaded: {td.atlas.style[:50]}...')
+"
+```
 
 ---
 
@@ -324,8 +479,9 @@ curl -X POST http://localhost:8001/benchmark/evaluate \
 ### Modified Files
 | File | Phase | Changes |
 |------|-------|---------|
-| `requirements.txt` | 0 | Add dspy-ai, mlflow |
-| `api/services/environment.py` | 2 | Enhance Environment, TreeData |
+| `requirements.txt` | 0 ✅ | Add dspy-ai, mlflow |
+| `api/services/environment.py` | 2 | Restructure `tasks_completed`, add `update_tasks_completed()`, `tasks_completed_string()`, `current_tool` |
+| `api/services/agent.py` | 2 | Wire Atlas, update `_execute_tool()` for task tracking |
 | `api/services/agent.py` | 7 | DSPy decision making |
 | `api/services/tools/base.py` | 7 | Ensure llm_message in Result |
 | `api/main.py` | 5 | Register benchmark router |
@@ -340,9 +496,9 @@ curl -X POST http://localhost:8001/benchmark/evaluate \
 
 | Metric | Current | Target | Phase |
 |--------|---------|--------|-------|
-| DSPy + Ollama works | ❌ | ✅ | 0 |
-| Atlas loads correctly | ❌ | ✅ | 1 |
-| Context accumulates | ❌ | ✅ | 2 |
+| DSPy + Ollama works | ✅ | ✅ | 0 |
+| Atlas loads correctly | ✅ | ✅ | 1 |
+| Context accumulates | ✅ | ✅ | 2 |
 | Judge returns structured output | ❌ | ✅ | 4 |
 | Benchmark API works | ❌ | ✅ | 5 |
 | Frontend Benchmark Mode | ❌ | ✅ | 6 |
