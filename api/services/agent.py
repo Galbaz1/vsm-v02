@@ -23,6 +23,7 @@ from api.services.tracer import (
     get_environment_debug_state,
     is_tracing_enabled,
 )
+from api.knowledge.thorguard import get_atlas
 from api.services.tools import (
     Tool,
     FastVectorSearchTool,
@@ -293,10 +294,15 @@ class AgentOrchestrator:
         tree_data: TreeData,
         inputs: Dict[str, Any],
         query_id: str,
+        reasoning: str = "",
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Execute a tool and handle its outputs."""
         start_time = time.time()
         successful = True
+        last_llm_message = ""
+        
+        # Set current tool for error context
+        tree_data.set_current_tool(tool.name)
         
         try:
             async for output in tool(tree_data, inputs):
@@ -306,6 +312,9 @@ class AgentOrchestrator:
                 if isinstance(output, Result):
                     # Add to environment
                     tree_data.environment.add(tool.name, output)
+                    # Capture llm_message for task tracking
+                    if hasattr(output, 'llm_message') and output.llm_message:
+                        last_llm_message = output.llm_message
                     yield output.to_frontend(query_id)
                 
                 elif isinstance(output, Error):
@@ -325,13 +334,23 @@ class AgentOrchestrator:
             ).to_frontend(query_id)
             successful = False
         
-        # Record task completion
+        # Record task completion with rich context
         elapsed_ms = (time.time() - start_time) * 1000
-        tree_data.record_task(tool.name, elapsed_ms)
+        tree_data.update_tasks_completed(
+            prompt=tree_data.user_prompt,
+            task=tool.name,
+            num_iterations=tree_data.num_iterations,
+            reasoning=reasoning,
+            inputs=inputs,
+            llm_message=last_llm_message,
+            action=True,
+            error=not successful,
+            duration_ms=elapsed_ms,
+        )
         
-        # Clear errors if successful
+        # Clear errors for this tool if successful
         if successful:
-            tree_data.clear_errors()
+            tree_data.clear_errors(tool.name)
     
     async def run(
         self,
@@ -360,13 +379,14 @@ class AgentOrchestrator:
             enabled=is_tracing_enabled(),
         )
         
-        # Initialize TreeData
+        # Initialize TreeData with Atlas for domain knowledge
         tree_data = TreeData(
             user_prompt=user_prompt,
             environment=Environment(),
             conversation_history=conversation_history or [],
             collection_names=self.collection_names,
             max_iterations=self.max_iterations,
+            atlas=get_atlas(),
         )
         
         # Add user message to history
@@ -395,7 +415,9 @@ class AgentOrchestrator:
             auto_triggers = await self._check_auto_triggers(tree_data)
             for tool, inputs in auto_triggers:
                 yield Status(f"Auto-triggered: {tool.name}").to_frontend(query_id)
-                async for output in self._execute_tool(tool, tree_data, inputs, query_id):
+                async for output in self._execute_tool(
+                    tool, tree_data, inputs, query_id, reasoning=f"Auto-triggered: {tool.name}"
+                ):
                     if output:
                         yield output
             
@@ -431,7 +453,7 @@ class AgentOrchestrator:
                 yield Status(tool.status).to_frontend(query_id)
                 
                 async for output in self._execute_tool(
-                    tool, tree_data, decision.inputs, query_id
+                    tool, tree_data, decision.inputs, query_id, reasoning=decision.reasoning
                 ):
                     if output:
                         yield output
