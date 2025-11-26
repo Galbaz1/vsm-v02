@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [
+      {
+        "command": "./hooks/before-prompt.sh"
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": "./hooks/after-edit.sh"
+      }
+    ],
+    "stop": [
+      {
+        "command": "./hooks/stop.sh"
+      }
+    ]
+  }
+}

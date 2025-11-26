@@ -25,3 +25,7 @@ accelerate  # Automatic device mapping
 # API utilities
 python-multipart
 requests
+
+# Dual-Model Analysis Sub-Agent
+openai>=1.50.0  # GPT-5.1 Responses API (high reasoning)
+google-genai>=1.50.0  # Gemini 3 Pro (1M context window)

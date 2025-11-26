@@ -6,16 +6,23 @@ Refactored from rule-based routing to use Elysia patterns:
 - Tools with availability control
 - Decision tree traversal
 - Self-healing error handling
+- LLM-powered decision making with gpt-oss:120b
 
 Original Elysia: https://github.com/weaviate/elysia
 """
 
 import asyncio
+import logging
 import time
 import uuid
 from typing import Any, AsyncGenerator, Dict, List, Optional, TYPE_CHECKING
 
 from api.services.environment import Environment, TreeData
+from api.services.tracer import (
+    QueryTracer,
+    get_environment_debug_state,
+    is_tracing_enabled,
+)
 from api.services.tools import (
     Tool,
     FastVectorSearchTool,
@@ -23,6 +30,12 @@ from api.services.tools import (
     HybridSearchTool,
     TextResponseTool,
     SummarizeTool,
+    VisualInterpretationTool,
+)
+from api.services.llm import (
+    get_ollama_client,
+    DecisionPromptBuilder,
+    DecisionResult,
 )
 from api.schemas.agent import (
     Result,
@@ -33,6 +46,8 @@ from api.schemas.agent import (
     Complete,
     ToolOutput,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AgentOrchestrator:
@@ -79,6 +94,7 @@ class AgentOrchestrator:
             FastVectorSearchTool(),
             ColQwenSearchTool(),
             HybridSearchTool(),
+            VisualInterpretationTool(),
             TextResponseTool(),
             SummarizeTool(),
         ]
@@ -125,8 +141,70 @@ class AgentOrchestrator:
         """
         Decide which tool to use based on query and state.
         
-        Currently rule-based, will be upgraded to LLM-based.
-        TODO: Replace with Qwen3 with thinking mode for intelligent routing.
+        Uses gpt-oss:120b for intelligent routing, with rule-based fallback.
+        """
+        # Try LLM-based decision first
+        try:
+            return await self._make_llm_decision(tree_data, available_tools)
+        except Exception as e:
+            logger.warning(f"LLM decision failed, falling back to rules: {e}")
+            return await self._make_rule_decision(tree_data, available_tools)
+    
+    async def _make_llm_decision(
+        self,
+        tree_data: TreeData,
+        available_tools: List[Tool],
+    ) -> Decision:
+        """
+        LLM-powered decision making using gpt-oss:120b.
+        
+        Builds a prompt with tool descriptions, environment state, and history,
+        then parses the LLM's JSON response into a Decision object.
+        """
+        # Build the decision prompt
+        messages = DecisionPromptBuilder.build_decision_prompt(
+            tree_data=tree_data,
+            available_tools=available_tools,
+        )
+        
+        # Call the LLM
+        client = get_ollama_client()
+        response = await client.chat(
+            messages=messages,
+            temperature=0.3,  # Lower temp for more consistent decisions
+            max_tokens=512,
+        )
+        
+        # Parse the response
+        decision_result = DecisionResult.from_json(response.text)
+        
+        # Validate tool exists
+        tool_names = {t.name for t in available_tools}
+        if decision_result.tool_name not in tool_names:
+            logger.warning(
+                f"LLM chose unavailable tool: {decision_result.tool_name}. "
+                f"Available: {tool_names}"
+            )
+            # Fall back to text_response if tool doesn't exist
+            decision_result.tool_name = "text_response"
+            decision_result.should_end = True
+        
+        return Decision(
+            tool_name=decision_result.tool_name,
+            inputs=decision_result.inputs,
+            reasoning=decision_result.reasoning,
+            should_end=decision_result.should_end,
+        )
+    
+    async def _make_rule_decision(
+        self,
+        tree_data: TreeData,
+        available_tools: List[Tool],
+    ) -> Decision:
+        """
+        Rule-based fallback decision making.
+        
+        Used when LLM is unavailable or fails.
         """
         query = tree_data.user_prompt.lower()
         
@@ -273,6 +351,14 @@ class AgentOrchestrator:
             Stream of outputs (Result, Error, Response, Status, Decision, Complete)
         """
         query_id = query_id or str(uuid.uuid4())
+        start_time = time.time()
+        
+        # Initialize query tracer for debugging
+        tracer = QueryTracer(
+            query_id=query_id,
+            user_query=user_prompt,
+            enabled=is_tracing_enabled(),
+        )
         
         # Initialize TreeData
         tree_data = TreeData(
@@ -286,6 +372,9 @@ class AgentOrchestrator:
         # Add user message to history
         tree_data.add_conversation_message("user", user_prompt)
         
+        # Track outcome for tracer
+        outcome = "completed"
+        
         # Main decision loop
         while tree_data.num_iterations < tree_data.max_iterations:
             tree_data.num_iterations += 1
@@ -294,10 +383,12 @@ class AgentOrchestrator:
             available_tools = await self._get_available_tools(tree_data)
             
             if not available_tools:
+                tracer.log_error("No tools available", recoverable=False)
                 yield Error(
                     message="No tools available",
                     recoverable=False,
                 ).to_frontend(query_id)
+                outcome = "error"
                 break
             
             # Check for auto-triggers
@@ -311,6 +402,18 @@ class AgentOrchestrator:
             # Make decision
             decision = await self._make_decision(tree_data, available_tools)
             
+            # Log iteration to tracer
+            tracer.log_iteration(
+                iteration=tree_data.num_iterations,
+                decision={
+                    "tool_name": decision.tool_name,
+                    "inputs": decision.inputs,
+                    "reasoning": decision.reasoning,
+                    "should_end": decision.should_end,
+                },
+                environment_state=get_environment_debug_state(tree_data.environment),
+            )
+            
             # Yield decision for transparency
             yield decision.to_frontend(query_id)
             
@@ -319,6 +422,7 @@ class AgentOrchestrator:
                 yield Response(
                     text="I cannot complete this task with the available tools.",
                 ).to_frontend(query_id)
+                outcome = "impossible"
                 break
             
             # Execute chosen tool
@@ -335,6 +439,16 @@ class AgentOrchestrator:
             # Check if we should end
             if decision.should_end:
                 break
+        else:
+            # Loop exhausted max_iterations
+            outcome = "max_iterations"
+            logger.warning(
+                f"Query {query_id[:8]} hit max iterations ({self.max_iterations})"
+            )
+        
+        # Save trace for debugging
+        total_time_ms = (time.time() - start_time) * 1000
+        tracer.save(outcome=outcome, total_time_ms=total_time_ms)
         
         # Yield completion signal
         yield Complete().to_frontend(query_id)

@@ -10,6 +10,10 @@ from api.services.tools.search_tools import (
     ColQwenSearchTool,
     HybridSearchTool,
 )
+from api.services.tools.visual_tools import (
+    VisualInterpretationTool,
+    DiagramExtractionTool,
+)
 from api.schemas.agent import Result, Error, Response, Status
 
 __all__ = [
@@ -19,6 +23,8 @@ __all__ = [
     "FastVectorSearchTool",
     "ColQwenSearchTool", 
     "HybridSearchTool",
+    "VisualInterpretationTool",
+    "DiagramExtractionTool",
     "Result",
     "Error",
     "Response",

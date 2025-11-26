@@ -1,0 +1,692 @@
+---
+description: Always read this rule before you create a flowchart or write or update any mermaid in the sd syntax.
+alwaysApply: false
+---
+## Basic Structure
+
+### Diagram Declaration
+
+**ALWAYS start with diagram type declaration:**
+
+```mermaid
+flowchart TD
+    A --> B
+```
+
+**Options:**
+- `flowchart TD` or `flowchart TB` - Top to Bottom (preferred, modern syntax)
+- `flowchart LR` - Left to Right
+- `flowchart BT` - Bottom to Top
+- `flowchart RL` - Right to Left
+- `graph TD` - Legacy syntax (use `flowchart` instead)
+
+**Rule**: Use `flowchart` (not `graph`) for modern syntax support.
+
+---
+
+## Node Shapes
+
+### Basic Shapes (Traditional Syntax)
+
+| Shape | Syntax | Example | Use Case |
+|-------|--------|---------|----------|
+| **Rectangle** | `A[Label]` or `A` | `Process[Process Step]` | Standard process step |
+| **Rounded Rectangle** | `A(Label)` | `Event(Start Event)` | Event or start/end point |
+| **Stadium** | `A([Label])` | `Terminal([Terminal])` | Terminal point |
+| **Subroutine** | `A[[Label]]` | `Subroutine[[Subroutine]]` | Subroutine/function |
+| **Cylinder** | `A[(Label)]` | `Database[(Database)]` | Database/storage |
+| **Circle** | `A((Label))` | `Start((Start))` | Start point |
+| **Double Circle** | `A(((Label)))` | `Stop(((Stop)))` | Stop/end point |
+| **Diamond** | `A{Label}` | `Decision{Yes or No?}` | Decision point |
+| **Hexagon** | `A{{Label}}` | `Prepare{{Prepare}}` | Preparation step |
+| **Parallelogram** | `A[/Label\]` | `Input[/Input\]` | Input/output |
+| **Parallelogram Alt** | `A[\Label/]` | `Output[\Output/]` | Alternative I/O |
+| **Trapezoid** | `A[/Label\]` | `Trap[/Trapezoid\]` | Manual operation |
+| **Trapezoid Alt** | `A[\Label/]` | `TrapAlt[\Trapezoid/]` | Alternative trapezoid |
+
+### Advanced Shapes (v11.3.0+ New Syntax)
+
+**New syntax format**: `NodeID@{ shape: shapeName }`
+
+**Complete Shape Reference:**
+
+| Semantic Name | Shape Name | Short Name | Aliases | Description |
+|---------------|------------|------------|---------|-------------|
+| **Process** | Rectangle | `rect` | `proc`, `process`, `rectangle` | Standard process |
+| **Event** | Rounded Rectangle | `rounded` | `event` | Event representation |
+| **Terminal Point** | Stadium | `stadium` | `pill`, `terminal` | Terminal point |
+| **Subprocess** | Framed Rectangle | `fr-rect` | `framed-rectangle`, `subproc`, `subprocess`, `subroutine` | Subprocess |
+| **Database** | Cylinder | `cyl` | `cylinder`, `database`, `db` | Database storage |
+| **Decision** | Diamond | `diam` | `decision`, `diamond`, `question` | Decision point |
+| **Start** | Circle | `circle` | `circ` | Starting point |
+| **Start** | Small Circle | `sm-circ` | `small-circle`, `start` | Small start point |
+| **Stop** | Double Circle | `dbl-circ` | `double-circle` | Stop point |
+| **Stop** | Framed Circle | `fr-circ` | `framed-circle`, `stop` | Framed stop |
+| **Prepare Conditional** | Hexagon | `hex` | `hexagon`, `prepare` | Preparation step |
+| **Card** | Notched Rectangle | `notch-rect` | `card`, `notched-rectangle` | Card representation |
+| **Document** | Document | `doc` | `doc`, `document` | Document |
+| **Multi-Document** | Stacked Document | `docs` | `documents`, `st-doc`, `stacked-document` | Multiple documents |
+| **Lined Document** | Lined Document | `lin-doc` | `lined-document` | Lined document |
+| **Tagged Document** | Tagged Document | `tag-doc` | `tagged-document` | Tagged document |
+| **Manual Input** | Sloped Rectangle | `sl-rect` | `manual-input`, `sloped-rectangle` | Manual input |
+| **Manual Operation** | Trapezoid Base Top | `trap-t` | `inv-trapezoid`, `manual`, `trapezoid-top` | Manual task |
+| **Priority Action** | Trapezoid Base Bottom | `trap-b` | `priority`, `trapezoid`, `trapezoid-bottom` | Priority action |
+| **Delay** | Half-Rounded Rectangle | `delay` | `half-rounded-rectangle` | Delay step |
+| **Extract** | Triangle | `tri` | `extract`, `triangle` | Extraction process |
+| **Manual File** | Flipped Triangle | `flip-tri` | `flipped-triangle`, `manual-file` | Manual file operation |
+| **Data Input/Output** | Lean Right | `lean-r` | `in-out`, `lean-right` | Input/output |
+| **Data Input/Output** | Lean Left | `lean-l` | `lean-left`, `out-in` | Output/input |
+| **Display** | Curved Trapezoid | `curv-trap` | `curved-trapezoid`, `display` | Display |
+| **Internal Storage** | Window Pane | `win-pane` | `internal-storage`, `window-pane` | Internal storage |
+| **Direct Access Storage** | Horizontal Cylinder | `h-cyl` | `das`, `horizontal-cylinder` | Direct access storage |
+| **Disk Storage** | Lined Cylinder | `lin-cyl` | `disk`, `lined-cylinder` | Disk storage |
+| **Stored Data** | Bow Tie Rectangle | `bow-rect` | `bow-tie-rectangle`, `stored-data` | Stored data |
+| **Divided Process** | Divided Rectangle | `div-rect` | `div-proc`, `divided-process`, `divided-rectangle` | Divided process |
+| **Lined/Shaded Process** | Lined Rectangle | `lin-rect` | `lin-proc`, `lined-process`, `lined-rectangle`, `shaded-process` | Lined process |
+| **Tagged Process** | Tagged Rectangle | `tag-rect` | `tag-proc`, `tagged-process`, `tagged-rectangle` | Tagged process |
+| **Multi-Process** | Stacked Rectangle | `st-rect` | `processes`, `procs`, `stacked-rectangle` | Multiple processes |
+| **Fork/Join** | Filled Rectangle | `fork` | `join` | Fork or join |
+| **Junction** | Filled Circle | `f-circ` | `filled-circle`, `junction` | Junction point |
+| **Summary** | Crossed Circle | `cross-circ` | `crossed-circle`, `summary` | Summary |
+| **Loop Limit** | Trapezoidal Pentagon | `notch-pent` | `loop-limit`, `notched-pentagon` | Loop limit |
+| **Collate** | Hourglass | `hourglass` | `collate`, `hourglass` | Collate operation |
+| **Com Link** | Lightning Bolt | `bolt` | `com-link`, `lightning-bolt` | Communication link |
+| **Comment** | Curly Brace | `brace` | `brace-l`, `comment` | Comment |
+| **Comment Right** | Curly Brace Right | `brace-r` | Comment right |
+| **Comment Both Sides** | Curly Braces | `braces` | Comment with braces |
+| **Paper Tape** | Flag | `flag` | `paper-tape` | Paper tape |
+| **Text Block** | Text Block | `text` | Text block |
+| **Odd** | Odd | `odd` | Odd shape |
+
+**Examples:**
+
+```mermaid
+flowchart TD
+    A@{ shape: rect }[Process]
+    B@{ shape: diam }[Decision]
+    C@{ shape: circle }[Start]
+    D@{ shape: dbl-circ }[Stop]
+    E@{ shape: hex }[Prepare]
+    F@{ shape: doc }[Document]
+    G@{ shape: cyl }[Database]
+```
+
+### Special Shapes
+
+**Icon Shape:**
+```mermaid
+A@{ icon: "fa:fa-check", form: "circle", label: "Success", pos: "b", h: 48 }
+```
+
+**Image Shape:**
+```mermaid
+A@{ img: "https://example.com/image.png", label: "Image Label", pos: "t", w: 60, h: 60, constraint: "on" }
+```
+
+---
+
+## Connections & Arrows
+
+### Arrow Types
+
+| Arrow Type | Syntax | Example | Use Case |
+|------------|--------|---------|----------|
+| **Solid with Arrow** | `-->` | `A --> B` | Standard flow |
+| **Solid without Arrow** | `---` | `A --- B` | Connection without direction |
+| **Thick with Arrow** | `==>` | `A ==> B` | Important/strong connection |
+| **Thick without Arrow** | `===` | `A === B` | Strong connection |
+| **Dotted with Arrow** | `-.->` | `A -.-> B` | Optional/weak connection |
+| **Dotted without Arrow** | `-.-` | `A -.- B` | Weak connection |
+| **Circle Edge** | `--o` | `A --o B` | Circle edge |
+| **Cross Edge** | `--x` | `A --x B` | Cross edge |
+
+### Arrow with Labels
+
+```mermaid
+A -->|Label Text| B
+A -.->|Optional| B
+A ==>|Important| B
+```
+
+**Best Practice**: Put labels in quotes if they contain special characters:
+```mermaid
+A -->|"Yes/No"| B
+```
+
+### Minimum Link Length
+
+Add extra dashes to make links span more ranks:
+
+| Length | Normal | Thick | Dotted |
+|--------|--------|-------|--------|
+| 1 rank | `---` | `===` | `-.-` |
+| 2 ranks | `----` | `====` | `-..-` |
+| 3 ranks | `-----` | `=====` | `-...-` |
+
+**Example:**
+```mermaid
+A --> B
+A ----> C  // Spans 2 ranks
+```
+
+### Chaining Links
+
+**Allowed** (but use sparingly for readability):
+```mermaid
+A --> B --> C --> D
+```
+
+**Better** (more readable):
+```mermaid
+A --> B
+B --> C
+C --> D
+```
+
+### Edge IDs and Animation
+
+**Assign ID to edge:**
+```mermaid
+e1@A --> B
+```
+
+**Enable animation:**
+```mermaid
+e1@{ animate: true, animation: fast }
+```
+
+**Animation speeds**: `fast`, `slow`
+
+---
+
+## Subgraphs
+
+### Basic Subgraph Syntax
+
+```mermaid
+flowchart TD
+    subgraph SubgraphID["Display Name"]
+        A --> B
+        B --> C
+    end
+```
+
+**Rules:**
+1. **Subgraph ID**: Use alphanumeric, no spaces (use underscores: `SubgraphID`)
+2. **Display Name**: Optional, in quotes if it contains spaces
+3. **Always close with `end`**
+
+### Connecting to Subgraphs
+
+**❌ WRONG - Direct connection to subgraph:**
+```mermaid
+flowchart TD
+    A --> SubgraphID
+    subgraph SubgraphID["My Subgraph"]
+        B --> C
+    end
+```
+
+**✅ CORRECT - Connect to nodes INSIDE subgraph:**
+```mermaid
+flowchart TD
+    A --> B
+    subgraph SubgraphID["My Subgraph"]
+        B --> C
+    end
+```
+
+**✅ ALTERNATIVE - Use dotted arrow (less reliable):**
+```mermaid
+flowchart TD
+    A -.-> SubgraphID
+    subgraph SubgraphID["My Subgraph"]
+        B --> C
+    end
+```
+
+**Best Practice**: Always connect to nodes inside subgraphs, not the subgraph itself.
+
+### Subgraph Direction
+
+```mermaid
+flowchart TD
+    subgraph SubgraphID["My Subgraph"]
+        direction LR
+        A --> B
+    end
+```
+
+**⚠️ LIMITATION**: If any node inside subgraph connects to outside, subgraph direction is ignored and inherits parent direction.
+
+### Empty Subgraphs
+
+**❌ AVOID**: Subgraphs containing only other subgraphs (no nodes) cannot be connected to/from.
+
+**✅ INCLUDE**: At least one node inside each subgraph.
+
+---
+
+## Styling & Colors
+
+### Inline Node Styling
+
+```mermaid
+style NodeID fill:#color,stroke:#color,stroke-width:2px,color:#textcolor
+```
+
+**Example:**
+```mermaid
+style A fill:#e1f5ff,stroke:#01579b,stroke-width:3px,color:#000
+```
+
+### Color Formats
+
+- **Hex**: `#ff0000`, `#f00` (short form)
+- **RGB**: `rgb(255,0,0)`
+- **RGBA**: `rgba(255,0,0,0.5)`
+- **Named Colors**: `red`, `blue`, `green` (limited support)
+
+**Best Practice**: Use hex colors for consistency.
+
+### Class Definitions (classDef)
+
+**Define a class:**
+```mermaid
+classDef className fill:#f9f,stroke:#333,stroke-width:4px,color:#000
+```
+
+**Apply to node:**
+```mermaid
+class NodeID className
+```
+
+**Apply to multiple nodes:**
+```mermaid
+class NodeID1,NodeID2,NodeID3 className
+```
+
+**Shorthand (inline):**
+```mermaid
+A:::className --> B
+```
+
+**Define multiple classes:**
+```mermaid
+classDef class1,class2 fill:#f9f,stroke:#333
+```
+
+**Default class** (applies to all nodes without specific class):
+```mermaid
+classDef default fill:#f9f,stroke:#333,stroke-width:2px
+```
+
+### Styling Links
+
+**Style by link order** (0-indexed):
+```mermaid
+linkStyle 0 stroke:#ff3,stroke-width:4px,color:red
+linkStyle 1,2,7 color:blue
+```
+
+**Style all links:**
+```mermaid
+linkStyle default stroke:#333,stroke-width:2px
+```
+
+### Styling Line Curves
+
+**Available curves**: `basis`, `bumpX`, `bumpY`, `cardinal`, `catmullRom`, `linear`, `monotoneX`, `monotoneY`, `natural`, `step`, `stepAfter`, `stepBefore`
+
+**Set via directive:**
+```mermaid
+%%{ init: { 'flowchart': { 'curve': 'stepBefore' } } }%%
+flowchart LR
+```
+
+### Color Palette Suggestions
+
+**Professional Color Schemes:**
+
+**Blue Theme** (Processes):
+- Fill: `#e1f5ff`, `#b3e5fc`, `#81d4fa`
+- Stroke: `#01579b`, `#0277bd`, `#0288d1`
+
+**Green Theme** (Success/Complete):
+- Fill: `#e8f5e9`, `#c8e6c9`, `#a5d6a7`
+- Stroke: `#1b5e20`, `#2e7d32`, `#388e3c`
+
+**Orange Theme** (Warning/Attention):
+- Fill: `#fff3e0`, `#ffe0b2`, `#ffcc80`
+- Stroke: `#e65100`, `#f57c00`, `#ff9800`
+
+**Red Theme** (Error/Stop):
+- Fill: `#ffebee`, `#ffcdd2`, `#ef9a9a`
+- Stroke: `#c62828`, `#d32f2f`, `#e53935`
+
+**Purple Theme** (Special/Important):
+- Fill: `#f3e5f5`, `#e1bee7`, `#ce93d8`
+- Stroke: `#4a148c`, `#6a1b9a`, `#7b1fa2`
+
+**Gray Theme** (Neutral/Default):
+- Fill: `#fafafa`, `#f5f5f5`, `#eeeeee`
+- Stroke: `#424242`, `#616161`, `#757575`
+
+---
+
+## Layout Directions
+
+| Direction | Code | Description |
+|----------|------|-------------|
+| **Top to Bottom** | `TD` or `TB` | Default, vertical flow |
+| **Bottom to Top** | `BT` | Reverse vertical |
+| **Left to Right** | `LR` | Horizontal flow |
+| **Right to Left** | `RL` | Reverse horizontal |
+
+**Example:**
+```mermaid
+flowchart TD  // Top to bottom
+flowchart LR  // Left to right
+```
+
+---
+
+## Best Practices
+
+### 1. Node Naming
+
+**✅ GOOD:**
+- Alphanumeric IDs: `Process1`, `DecisionA`, `StartNode`
+- Underscores: `process_1`, `decision_a`
+- Consistent naming convention
+
+**❌ AVOID:**
+- Spaces in IDs: `Process 1` (use `Process1` or `Process_1`)
+- Special characters: `process-1`, `process@1`
+- Reserved words: `end` (use `End` or `END`)
+
+### 2. Labels
+
+**✅ GOOD:**
+- Simple labels: `A[Process Step]`
+- Quoted labels with spaces: `A["Process Step"]`
+- Markdown formatting: `A["**Bold** text"]`
+
+**❌ AVOID:**
+- Unquoted labels with special characters
+- HTML tags (use markdown instead)
+- Line breaks without `<br/>` tag
+
+### 3. Connections
+
+**✅ GOOD:**
+- One connection per line for readability
+- Clear, descriptive labels on arrows
+- Consistent arrow types (solid for main flow, dotted for optional)
+
+**❌ AVOID:**
+- Overly long chains: `A --> B --> C --> D --> E --> F`
+- Mixing arrow types without reason
+- Connecting directly to subgraphs (connect to nodes inside)
+
+### 4. Subgraphs
+
+**✅ GOOD:**
+- Explicit subgraph IDs: `subgraph ProcessGroup["Process Group"]`
+- At least one node inside each subgraph
+- Connect to nodes inside subgraphs
+
+**❌ AVOID:**
+- Empty subgraph labels: `subgraph Group[" "]`
+- Connecting directly to subgraph ID
+- Nested subgraphs without nodes
+
+### 5. Styling
+
+**✅ GOOD:**
+- Use `classDef` for reusable styles
+- Consistent color scheme throughout diagram
+- Meaningful color choices (green=success, red=error, etc.)
+
+**❌ AVOID:**
+- Inline styles for every node (use classes)
+- Too many different colors (3-5 max)
+- Colors that don't convey meaning
+
+### 6. Comments
+
+**✅ GOOD:**
+```mermaid
+%% This is a comment
+A --> B
+```
+
+**❌ AVOID:**
+- Comments with `{}` braces: `%% {comment}` (breaks renderer)
+- Comments at end of line (put on separate line)
+
+### 7. Diagram Size
+
+**✅ GOOD:**
+- Break large diagrams into smaller, focused ones
+- Use subgraphs to group related nodes
+- Maximum 20-30 nodes per diagram
+
+**❌ AVOID:**
+- Overly complex diagrams (50+ nodes)
+- Deep nesting (more than 3-4 levels)
+
+---
+
+## Common Pitfalls
+
+### 1. Reserved Word "end"
+
+**Problem**: Using `end` as a node label breaks the diagram.
+
+**❌ WRONG:**
+```mermaid
+A --> end
+```
+
+**✅ CORRECT:**
+```mermaid
+A --> End
+A --> END
+A --> "end"
+```
+
+### 2. Starting Node ID with "o" or "x"
+
+**Problem**: `A--oB` creates circle edge, `A--xB` creates cross edge.
+
+**❌ WRONG:**
+```mermaid
+A --> oB
+A --> xB
+```
+
+**✅ CORRECT:**
+```mermaid
+A --> OB
+A --> XB
+A --> "oB"
+A --> "xB"
+```
+
+### 3. Connecting to Subgraphs
+
+**Problem**: Direct connection to subgraph may not render correctly.
+
+**❌ WRONG:**
+```mermaid
+A --> SubgraphID
+subgraph SubgraphID
+    B --> C
+end
+```
+
+**✅ CORRECT:**
+```mermaid
+A --> B
+subgraph SubgraphID
+    B --> C
+end
+```
+
+### 4. Empty Subgraph Labels
+
+**Problem**: Empty labels (`" "`) can cause rendering issues.
+
+**❌ WRONG:**
+```mermaid
+subgraph Group[" "]
+    A --> B
+end
+```
+
+**✅ CORRECT:**
+```mermaid
+subgraph Group["Group Name"]
+    A --> B
+end
+```
+
+### 5. Special Characters in Labels
+
+**Problem**: Unescaped special characters break rendering.
+
+**❌ WRONG:**
+```mermaid
+A[Process <step>]
+```
+
+**✅ CORRECT:**
+```mermaid
+A["Process <step>"]
+A["Process &lt;step&gt;"]
+```
+
+### 6. Chaining Too Many Connections
+
+**Problem**: Hard to read and debug.
+
+**❌ WRONG:**
+```mermaid
+A --> B --> C --> D --> E --> F --> G
+```
+
+**✅ CORRECT:**
+```mermaid
+A --> B
+B --> C
+C --> D
+D --> E
+E --> F
+F --> G
+```
+
+---
+
+## Special Characters
+
+### Escaping Characters
+
+**Entity codes** (base 10):
+```mermaid
+A["Process #35;"]  // # = #35;
+```
+
+**HTML character names:**
+```mermaid
+A["Process &lt;step&gt;"]  // < = &lt;, > = &gt;
+```
+
+### Quotes in Labels
+
+**Double quotes** for labels with spaces/special chars:
+```mermaid
+A["Process Step"]
+A["Yes/No"]
+A["Step 1: Start"]
+```
+
+### Markdown in Labels
+
+**Bold**: `A["**Bold Text**"]`  
+**Italic**: `A["*Italic Text*"]`  
+**Line break**: `A["Line 1<br/>Line 2"]`
+
+**Auto-wrapping** (enabled by default):
+```mermaid
+A["Long text that automatically wraps when it becomes too long for the node"]
+```
+
+**Disable auto-wrap** (via frontmatter):
+```mermaid
+---
+config:
+  markdownAutoWrap: false
+---
+flowchart TD
+```
+
+---
+
+## Complete Example
+
+```mermaid
+flowchart TD
+    Start([Start]) --> Process1[Process Step 1]
+    
+    Process1 --> Decision{Decision Point?}
+    
+    Decision -->|Yes| Process2[Process Step 2]
+    Decision -->|No| Process3[Process Step 3]
+    
+    subgraph Group1["Process Group"]
+        Process2 --> SubProcess1[Sub Process 1]
+        SubProcess1 --> SubProcess2[Sub Process 2]
+    end
+    
+    Process3 --> End([End])
+    SubProcess2 --> End
+    
+    style Start fill:#e8f5e9,stroke:#2e7d32,stroke-width:3px
+    style End fill:#ffebee,stroke:#c62828,stroke-width:3px
+    style Decision fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+    style Process1 fill:#e1f5ff,stroke:#01579b,stroke-width:2px
+    style Process2 fill:#e1f5ff,stroke:#01579b,stroke-width:2px
+    style Process3 fill:#e1f5ff,stroke:#01579b,stroke-width:2px
+```
+
+---
+
+## Quick Reference Checklist
+
+**Before finalizing a diagram, verify:**
+
+- [ ] Diagram starts with `flowchart TD` (or other direction)
+- [ ] All nodes have valid IDs (alphanumeric, no spaces)
+- [ ] Labels with spaces/special chars are quoted
+- [ ] Subgraphs have proper labels (not empty)
+- [ ] Connections go to nodes inside subgraphs, not subgraph IDs
+- [ ] No reserved words (`end`, `o`, `x`) used incorrectly
+- [ ] Consistent arrow types (solid for main flow)
+- [ ] Colors follow a meaningful scheme
+- [ ] Comments use `%%` on separate lines
+- [ ] Diagram is not too complex (break into smaller ones if needed)
+
+---
+
+## Additional Resources
+
+- **Official Docs**: https://mermaid.js.org/syntax/flowchart.html
+- **Live Editor**: https://mermaid.live
+- **Shape Reference**: https://mermaid.js.org/syntax/flowchart.html#node-shapes
+- **Styling Guide**: https://mermaid.js.org/syntax/flowchart.html#styling-and-classes
+
+---
+
+**Last Updated**: Based on Mermaid.js v11.3.0+ documentation  
+**Maintained By**: VSM Project Team

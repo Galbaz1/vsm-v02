@@ -1,0 +1,13 @@
+---
+description: "Debugging workflow - see /analyze command for details"
+alwaysApply: false
+globs:
+  - context_agent/**
+---
+# Debugging
+
+Use custom commands for debugging workflows:
+- `/analyze` - Research and create diagnosis file
+- `/implement` - Apply fix from diagnosis file
+
+See `.cursor/commands/` for detailed instructions.

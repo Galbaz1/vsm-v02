@@ -52,10 +52,12 @@ def perform_search(query: str, limit: int, chunk_type: Optional[str], group_by_p
             if chunk_type:
                 filters = Filter.by_property("chunk_type").equal(chunk_type)
 
-            result = coll.query.near_text(
+            # Use hybrid search (vector + BM25 keyword) for better recall
+            result = coll.query.hybrid(
                 query=query,
                 limit=limit * 2 if group_by_page else limit,
                 filters=filters,
+                alpha=0.5,  # Balance between vector (1.0) and keyword (0.0)
             )
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Weaviate error: {exc}") from exc

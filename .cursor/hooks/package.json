@@ -1,0 +1,15 @@
+{
+  "name": "hooks",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "cursor-hooks": "^1.1.6"
+  }
+}

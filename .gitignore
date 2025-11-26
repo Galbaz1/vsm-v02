@@ -16,3 +16,9 @@ yarn-error.log
 # Generated
 static/previews/
 *.log
+
+# Analysis Agent output
+context_agent/*.md
+
+# Elysia reference code (not part of our codebase)
+docs/elysia-source-code-for-reference-only/

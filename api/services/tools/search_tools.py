@@ -39,14 +39,9 @@ class FastVectorSearchTool(Tool):
                     "required": True,
                 },
                 "limit": {
-                    "description": "Maximum number of results",
+                    "description": "Maximum number of results (default 5, use 10+ for tables/specifications)",
                     "type": "int",
                     "default": 5,
-                },
-                "chunk_type": {
-                    "description": "Filter by chunk type (text, table, figure, title)",
-                    "type": "str",
-                    "default": None,
                 },
             },
             end=False,
@@ -71,17 +66,17 @@ class FastVectorSearchTool(Tool):
         
         query = inputs.get("query", tree_data.user_prompt)
         limit = inputs.get("limit", 5)
-        chunk_type = inputs.get("chunk_type")
         
         yield Status(f"Searching AssetManual for: {query[:50]}...")
         
         start_time = time.time()
         
         try:
+            # Search ALL chunk types (text, table, figure, title)
             hits, page_hits = perform_search(
                 query=query,
                 limit=limit,
-                chunk_type=chunk_type,
+                chunk_type=None,  # Always search all types
                 group_by_page=True,
             )
             
@@ -118,7 +113,7 @@ class FastVectorSearchTool(Tool):
                     "count": len(objects),
                     "time_ms": elapsed_ms,
                     "collection": "AssetManual",
-                    "chunk_type_filter": chunk_type,
+                    "chunk_type_filter": None,  # Searches all types
                 },
                 name="AssetManual",
                 llm_message=f"Found {len(objects)} text chunks matching '{query}' in {elapsed_ms}ms.",

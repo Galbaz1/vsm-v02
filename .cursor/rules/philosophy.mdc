@@ -6,125 +6,50 @@ alwaysApply: true
 
 ## Core Principles
 1. **Local-first** - All inference on M3 256GB Mac Studio
-2. **Dual-pipeline** - Text RAG (fast) + ColQwen (visual) stay separate
-3. **Visual grounding** - BBoxes and page images are core, not optional
-4. **Elysia patterns** - Decision tree, Environment, Tool availability, Result/Error
+2. **Native Ollama** - Must run natively (not Docker) to access full RAM/Metal
+3. **Dual-pipeline** - Text RAG (bge-m3) + ColQwen (visual) stay separate
+4. **Visual grounding** - BBoxes and page images are core, not optional
 
-## Current State (Nov 2025)
-```
-User Query → Agent (rule-based)
-           ├→ FastVectorSearch (AssetManual, ~0.5s)
-           └→ ColQwenSearch (PDFDocuments, ~3s)
-           → Environment stores results
-           → Mock text response
-```
-
-## Target State (Dec 2025)
-```
-User Query → Decision Agent (gpt-oss-120B)
-           │
-           ├─[fast text query]→ FastVectorSearchTool → Result
-           ├─[visual query]→ ColQwenSearchTool → Result → VLM Interpret
-           └─[has results]→ SummarizeTool / TextResponseTool
-           │
-           └→ Streaming NDJSON to frontend
-```
-
-## Model Architecture
-
-### Why Single LLM + Separate VLM?
-- **gpt-oss-120B** is MoE (5.1B active) - fast enough for decision agent
-- Same model handles complex tools - no model switching overhead
-- **VLM is different modality** - must be separate (Qwen3-VL-8B)
-- Elysia's `base_lm`/`complex_lm` can be same model
-
-### Memory Budget (M3 256GB)
+## Memory Budget (M3 256GB)
 | Model | Size | Notes |
 |-------|------|-------|
-| gpt-oss-120B | ~65GB | Shared for decision + complex |
-| Qwen3-VL-8B | ~8GB | On-demand for visual interpretation |
-| ColQwen2.5-v0.2 | ~4GB | Retrieval only |
-| nomic-embed-text | ~2GB | Embeddings |
-| **Total** | ~79GB | Leaves 177GB for KV cache |
+| gpt-oss-120B | ~65GB | LLM for decisions + text generation |
+| bge-m3 | ~1.2GB | Embeddings (8K context, retrieval-optimized) |
+| Qwen3-VL-8B | ~8GB | VLM for visual interpretation (MLX) |
+| ColQwen2.5-v0.2 | ~4GB | Visual retrieval (PyTorch) |
+| **Total** | ~78GB | Leaves 178GB for KV cache |
 
-## Key Elysia Patterns We Use
+## Agent Architecture (Elysia-inspired)
 
-### 1. Environment (Centralized State)
-```python
-environment[tool_name][result_name] = [
-    {"objects": [...], "metadata": {...}},
-]
+### Decision Loop
+```
+User Query → LLM Decision → Tool Execution → Result
+                ↑                              ↓
+                └──── Self-healing if error ───┘
 ```
 
-### 2. Tool Base Class
+### Tool Pattern
 ```python
 class Tool:
-    async def is_tool_available(self, tree_data) -> bool
-    async def run_if_true(self, tree_data) -> tuple[bool, dict]
-    async def __call__(self, tree_data, inputs) -> AsyncGenerator
-```
-
-### 3. Result with LLM Message
-```python
-yield Result(
-    objects=[...],
-    metadata={"query": query},
-    name="search_results",
-    llm_message="Found {num_objects} results for '{query}'"
-)
-```
-
-### 4. Error for Self-Healing
-```python
-yield Error(
-    message="No results found",
-    recoverable=True,
-    suggestion="Try broader search terms"
-)
-```
-
-## What We DON'T Use from Elysia
-- **DSPy** - Adds LiteLLM dependency; we use direct Ollama/MLX
-- **Weaviate query tool** - We have custom ColQwen multi-vector
-- **Preprocessing** - We already have parsed JSON from LandingAI
-- **Frontend app** - Custom Next.js with bbox overlays
-
-## Weakspots Addressed
-
-### 1. Two Runtime Complexity → Simplified
-- **Before**: Ollama + MLX for all models
-- **After**: Ollama for LLM, MLX only for VLM (different modality)
-
-### 2. VLM Integration Pattern
-```
-ColQwenSearchTool returns pages
-    ↓
-If has_visual_results and query needs interpretation:
-    ↓
-VisualInterpretationTool (Qwen3-VL-8B)
-    ↓
-Result with llm_message describing what VLM saw
-```
-
-### 3. Missing Result Payload for ColQwen
-```python
-class ColQwenResult(Result):
-    def __init__(self, pages, query):
-        super().__init__(
-            objects=pages,
+    async def __call__(self, tree_data, inputs) -> AsyncGenerator:
+        yield Result(
+            objects=[...],
             metadata={"query": query},
-            payload_type="colqwen_pages",
-            name="visual_results",
-            llm_message="Retrieved {num_objects} pages with visual matches"
+            llm_message="Found {n} results"  # For LLM context
         )
 ```
 
-### 4. Conversation Persistence → Future
-- Export/import tree to Weaviate (like Elysia)
-- Not MVP - add after core agent works
+### Environment (Centralized State)
+```python
+environment[tool_name][result_name] = [{"objects": [...], "metadata": {...}}]
+```
+
+## What We DON'T Use
+- **DSPy** - Direct Ollama prompting instead
+- **Dockerized Ollama** - Can't access full RAM/GPU
+- **Multiple LLMs** - Single gpt-oss for all text tasks
 
 ## Anti-Patterns
 - Don't add abstractions for one-time operations
 - Don't future-proof hypothetical requirements
 - Don't refactor unrelated code when fixing bugs
-- Don't use DSPy if direct prompting works

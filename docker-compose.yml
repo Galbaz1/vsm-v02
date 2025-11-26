@@ -17,21 +17,21 @@ services:
       DEFAULT_VECTORIZER_MODULE: "text2vec-ollama"
       ENABLE_MODULES: "text2vec-ollama,generative-ollama,bm25"
       CLUSTER_HOSTNAME: "node1"
-      # This is how Weaviate's Ollama modules reach the Ollama container
-      OLLAMA_API_ENDPOINT: "http://ollama:11434"
+      # Connect to Native Ollama on host machine (Mac)
+      OLLAMA_API_ENDPOINT: "http://host.docker.internal:11434"
     volumes:
       - weaviate_data:/var/lib/weaviate
-    depends_on:
-      - ollama
+    # depends_on:
+    #   - ollama
     restart: on-failure
 
-  ollama:
-    image: ollama/ollama:0.12.9
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    restart: unless-stopped
+  # ollama:
+  #   image: ollama/ollama:0.12.9
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   restart: unless-stopped
 
 volumes:
   weaviate_data:

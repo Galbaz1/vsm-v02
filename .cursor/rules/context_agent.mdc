@@ -1,0 +1,17 @@
+---
+description: "Analysis Agent output format - activates when editing context_agent/ files"
+alwaysApply: false
+globs:
+  - context_agent/**
+---
+# Analysis Output Format
+
+When creating `context_agent/analysis_*.md`, include:
+
+1. **User Query** - Exact failing query
+2. **Evidence** - Trace ID, search results, errors
+3. **Root Cause** - From analyzer or investigation
+4. **Recommended Fix** - File, line, code change
+5. **Verification** - Commands to test the fix
+
+See `/analyze` command for full workflow.

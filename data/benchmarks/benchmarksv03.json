@@ -1,0 +1,346 @@
+[
+    {
+      "category": "Complex Problem",
+      "query": "I am installing a 24V version of the ThorGuard Central Unit with a version 2.0 CPU-board. I need to configure the J1 jumpers to ensure the charging current is set to the higher setting (1800 mA). Which specific jumpers must be set to the 'ON' position?",
+      "answer": "According to the 'Default jumper positions' table for the 'Setting of jumpers \"J1\" version 2.0', for a 24V unit with 1800 mA charging current, the following jumpers must be set to ON: J1C, J1D, J1F, and J1G. (Note: J1A is not used, J1B is OFF, and J1E is OFF).",
+      "evidence": {
+        "document": "techman.pdf",
+        "locations": [
+          {
+            "chapter": "3",
+            "page": "19"
+          },
+          {
+            "chapter": "3",
+            "page": "20"
+          }
+        ],
+        "section": "3.2.7 Battery and power connections - Setting of jumpers \"J1\" version 2.0",
+        "visual_element": "Table: Default jumper positions"
+      }
+    },
+    {
+      "category": "Direct Question",
+      "query": "I am wiring an S-ART Unit S-106. Specifically, I need to connect a detector to Loop 3. To which specific terminal number on the board should the alarm/tamper input be connected, and which terminal is the common ground for this loop?",
+      "answer": "For the S-ART Unit S-106, to connect a detector to Loop 3, the alarm/tamper input must be connected to terminal 10 (labeled '3') on 'Terminal row A'. The common connection for this loop is terminal 9 (labeled 'C'), which is shared with Loop 2.",
+      "evidence": {
+        "document": "techman.pdf",
+        "locations": [
+          {
+            "chapter": "3",
+            "page": "50"
+          }
+        ],
+        "section": "3.8.6 Connection of S-ART Unit S-106",
+        "visual_element": "Connection table (Terminal row A) and Fig. 3.46"
+      }
+    },
+    {
+      "category": "Complex Problem",
+      "query": "I am configuring the address for an S-ART Unit S-108. I need to set it to Address 19. According to the hole-cutting chart, which specific hole numbers must be cut (U) and which must remain uncut (O)?",
+      "answer": "To set the S-ART Unit S-108 to Address 19, you must cut (U) the holes labeled '1', '2', and '16'. You must leave the holes labeled '4' and '8' uncut (O).",
+      "evidence": {
+        "document": "techman.pdf",
+        "locations": [
+          {
+            "chapter": "3",
+            "page": "55"
+          }
+        ],
+        "section": "3.8.8 Mounting and connection of S-ART Unit S-108 (Setting the address)",
+        "visual_element": "Table: Hole number (Address 19 row)"
+      }
+    },
+    {
+      "category": "Direct Question",
+      "query": "I am connecting a siren that has a built-in battery to the Relay output of the ThorGuard Central Unit. The schematic requires a specific component to be placed in series with the connection to the '12V' terminal. What is this component and its value?",
+      "answer": "When connecting a siren with a built-in battery to the '12V' terminal of the Relay connector, a resistor must be placed in series. The required value is 22 to 47 Ohms, 1W.",
+      "evidence": {
+        "document": "techman.pdf",
+        "locations": [
+          {
+            "chapter": "3",
+            "page": "14"
+          }
+        ],
+        "section": "3.2.5 Connection of inputs and outputs",
+        "visual_element": "Fig. 3.11 Example of connection of the connection of a siren to the 'Relay' connector"
+      }
+    },
+    {
+      "category": "Complex Problem",
+      "query": "I am installing an S-ART Unit S-130. I need to configure the jumpers on the Controller Board to handle the address range 16 to 29. How must jumpers '1' and 'D' be set?",
+      "answer": "To set the S-ART Unit S-130 to address range 16 to 29, you must install a jumper on '1' and install a jumper on 'D' (labeled JP1 in the diagram). The diagram indicates that for addresses 16 to 29, both JP1 and JP1 (labeled D in the text context) must be bridged.",
+      "evidence": {
+        "document": "techman.pdf",
+        "locations": [
+          {
+            "chapter": "3",
+            "page": "63"
+          },
+          {
+            "chapter": "3",
+            "page": "64"
+          }
+        ],
+        "section": "3.8.14 Installation of S-ART Unit S-130",
+        "visual_element": "Fig. 3.58 Position of jumpers... and 'Jumper setting for the various address settings' table"
+      }
+    },
+    {
+      "category": "Direct Question",
+      "query": "I need to perform a cold start of the ThorGuard Central Unit. Which specific switch number on the CPU-board controls this, and where is it located relative to the connectors?",
+      "answer": "The cold start is activated by switch number '1' on the dual switch block SW3. SW3 is located on the CPU-board immediately below the 'RS-485' connector and to the left of the 'Vdd' terminal.",
+      "evidence": {
+        "document": "techman.pdf",
+        "locations": [
+          {
+            "chapter": "3",
+            "page": "15"
+          }
+        ],
+        "section": "3.2.6 Connection of RS-485 bus",
+        "visual_element": "Fig. 3.12 Example of connection of the RS-485 bus... (Zoom bubble showing switch SW3)"
+      }
+    },
+    {
+      "category": "Direct Question",
+      "query": "What is the absolute maximum cable length allowed for a star-connected Intruder Alarm Keypad (RKP) on the RS-485 bus?",
+      "answer": "The maximum cable length for a star-connected RKP or RKP-E on the RS-485 bus is 0.3 meters.",
+      "evidence": {
+        "document": "techman.pdf",
+        "locations": [
+          {
+            "chapter": "3",
+            "page": "35"
+          }
+        ],
+        "section": "3.4.3 Connection to RS-485 bus",
+        "visual_element": "Fig. 3.30 (Note: ! Maximum cable length 0.3 m)"
+      }
+    },
+    {
+      "category": "Complex Problem",
+      "query": "I am wiring power to S-ART 120 Expansion Boards on a Central Unit with CPU-board version 2.0. According to the wiring diagram, where does the 'Vaux' connector on the CPU board receive its power from?",
+      "answer": "For CPU-board version 2.0, the 'Vaux' connector (which powers the expansion boards) receives its power via a wire jumper connected to the 'Vdd' terminal on the 'S-ART 400' connector bus located directly above it.",
+      "evidence": {
+        "document": "techman.pdf",
+        "locations": [
+          {
+            "chapter": "3",
+            "page": "18"
+          },
+          {
+            "chapter": "2",
+            "page": "7"
+          }
+        ],
+        "section": "3.2.7 Battery and power connections - 'Vaux' connector on CPU-boards Version 2.0",
+        "visual_element": "Fig. 3.14 Example of connection of power to the S-ART 120 Expansion Boards..."
+      }
+    },
+    {
+      "category": "Direct Question",
+      "query": "I see a red jumper stored on the test tool connector of an S-ART Unit S-112. What is the function of this jumper if I place it on the two pins of the connector?",
+      "answer": "Placing the red jumper on the two pins of the test tool connector shortcircuits the tamper switch. This is done to avoid alarms during the connection of the S-ART Unit.",
+      "evidence": {
+        "document": "techman.pdf",
+        "locations": [
+          {
+            "chapter": "3",
+            "page": "58"
+          }
+        ],
+        "section": "3.8.9 Connection of S-ART Unit S-112 (specifically 'Red jumper' section)",
+        "visual_element": "Image: Red jumper (showing Jumper stored vs Jumper in use)"
+      }
+    },
+    {
+      "category": "Direct Question",
+      "query": "When connecting the TCP/IP interface IPI, which specific RJ 45 socket should be used according to the diagram, and what category of cable is required?",
+      "answer": "According to the diagram and specifications, you should use 'RJ 45 socket (A)' (the upper socket). The cable required must be according to Category 5.",
+      "evidence": {
+        "document": "techman.pdf",
+        "locations": [
+          {
+            "chapter": "3",
+            "page": "29"
+          },
+          {
+            "chapter": "3",
+            "page": "28"
+          }
+        ],
+        "section": "3.3.2 Connection and setting of jumpers",
+        "visual_element": "Fig. 3.24 Connection of the IPI (Callout: RJ 45 socket (A))"
+      }
+    },
+    {
+      "category": "Direct Question",
+      "query": "I need to interpret the status LEDs on the Intrusion Terminal. What does a flashing green 'Power' LED indicate?",
+      "answer": "A flashing green 'Power' LED on the Intrusion Terminal indicates 'Battery operation (Mains power fault)'.",
+      "evidence": {
+        "document": "uk_firmware.pdf",
+        "locations": [
+          {
+            "chapter": "2",
+            "page": "3"
+          }
+        ],
+        "section": "2.2 The controls of the Intrusion Terminals",
+        "visual_element": "Table under 'Indicator LEDs'"
+      }
+    },
+    {
+      "category": "Complex Problem",
+      "query": "I am attempting to perform a 'Branch Test' (Menu 37). During the 'Branch Output Test' phase, the 'SIREN' output fails to activate. According to the operating flow, which key do I press to record this failure, and does the test stop immediately?",
+      "answer": "If the 'SIREN' fails to activate, you must press the 'NO' key (Down Arrow, indicated as 'FAILED' in the menu flow). The test does not stop immediately; it proceeds to the next output (e.g., 'ALERT BEACON') or the next phase of the test.",
+      "evidence": {
+        "document": "uk_firmware.pdf",
+        "locations": [
+          {
+            "chapter": "5",
+            "page": "10"
+          }
+        ],
+        "section": "5.2.7 Branch test (Menu 37)",
+        "visual_element": "Fig. 5.9 Example of a Branch Output Test... (specifically the flow from 'SIREN' to 'SIREN FAILED')"
+      }
+    },
+    {
+      "category": "Complex Problem",
+      "query": "I need to perform a 'Soak test' on a specific input. I have navigated to Menu 56 (SOAK TEST). Walk me through the key presses required to select Input ID 1007 for testing.",
+      "answer": "From Menu 56 (SOAK TEST?), press 'YES' (Right Arrow). The display shows 'SOAK NEW INPUT?'. Press 'YES' (Right Arrow) again. The display prompts for 'INPUT ID: ____'. Enter '1007' using the numeric keypad. Finally, press the Down Arrow key to start the test (indicated by 'DO SOAK TEST = v').",
+      "evidence": {
+        "document": "uk_firmware.pdf",
+        "locations": [
+          {
+            "chapter": "7",
+            "page": "7"
+          }
+        ],
+        "section": "7.2.6 Soak test of inputs (Menu 56)",
+        "visual_element": "Fig. 7.7 Example of menus for soak testing of inputs"
+      }
+    },
+    {
+      "category": "Direct Question",
+      "query": "In the Event Log, I see an event listed as 'SYS FAULT ALARM'. What is the specific Event type number associated with this text that appears in the submenu?",
+      "answer": "The Event type number for 'SYS FAULT ALARM' is 5.",
+      "evidence": {
+        "document": "uk_firmware.pdf",
+        "locations": [
+          {
+            "chapter": "4",
+            "page": "15"
+          }
+        ],
+        "section": "4.5.1 Alarm events",
+        "visual_element": "Table: Alarm events (Row No. 5)"
+      }
+    },
+    {
+      "category": "Complex Problem",
+      "query": "I am using the GPI-WDC menu (Menu 58) to diagnose a wireless detector. The status display shows a 16-bit binary code. According to the manual, what does it mean if Bit No. 9 is set to 1?",
+      "answer": "If Bit No. 9 is set to 1 in the Detector status display, it indicates a 'Loss of line power'.",
+      "evidence": {
+        "document": "uk_firmware.pdf",
+        "locations": [
+          {
+            "chapter": "7",
+            "page": "12"
+          }
+        ],
+        "section": "7.2.8 Input/output testing (Menu 58) - Detector status",
+        "visual_element": "Table: Detector status (Bit No. 9)"
+      }
+    },
+    {
+      "category": "Direct Question",
+      "query": "What is the maximum programmable time duration for a 'Branch Test' before it times out automatically?",
+      "answer": "The 'Branch Test' (and other manual tests) is automatically terminated after a period called 'Maximum Manual Test Time'. This time can be set in the range from 1 to 120 minutes.",
+      "evidence": {
+        "document": "uk_firmware.pdf",
+        "locations": [
+          {
+            "chapter": "5",
+            "page": "3"
+          },
+          {
+            "chapter": "5",
+            "page": "10"
+          }
+        ],
+        "section": "5.2 Performing the tests",
+        "visual_element": "Text paragraph under 5.2"
+      }
+    },
+    {
+      "category": "Complex Problem",
+      "query": "A user needs to change their PIN code because it has expired. They are at the 'ENTER OLD CODE' screen. What is the exact sequence of steps/screens they will encounter to complete the change to a new code?",
+      "answer": "1. At 'ENTER OLD CODE', enter the current PIN. 2. The screen changes to 'ENTER NEW CODE'. Enter the new PIN. 3. The screen changes to 'REPEAT NEW CODE'. Enter the new PIN again. 4. The screen displays 'PLEASE WAIT' followed by 'NEW PIN-CODE ACCEPTED'.",
+      "evidence": {
+        "document": "uk_firmware.pdf",
+        "locations": [
+          {
+            "chapter": "3",
+            "page": "3"
+          },
+          {
+            "chapter": "6",
+            "page": "5"
+          }
+        ],
+        "section": "3.1.1 First time log-in",
+        "visual_element": "Fig. 3.1 Example of the procedure and menus used for the first time log-in..."
+      }
+    },
+    {
+      "category": "Direct Question",
+      "query": "I am performing an 'Internal Battery Test' (Menu 33). How long does the test last, and how often does it re-test during that period?",
+      "answer": "The Internal Battery Test lasts for 2 minutes, with testing occurring at 6-second intervals.",
+      "evidence": {
+        "document": "uk_firmware.pdf",
+        "locations": [
+          {
+            "chapter": "5",
+            "page": "4"
+          }
+        ],
+        "section": "5.2.3 Battery test (Menu 33)",
+        "visual_element": "Fig. 5.4 Example of the menus shown during the test of the battery"
+      }
+    },
+    {
+      "category": "Complex Problem",
+      "query": "Using the Intrusion Terminal, I need to initiate a manual test of the external backup battery. Starting from the main 'BATTERY TEST?' menu, what is the exact sequence of keys I must press to reach the external test option?",
+      "answer": "Starting at the main 'BATTERY TEST?' menu (Menu 33), you must first press the 'YES' key (Right Arrow) to enter the submenu. This displays 'INT. BATT. TEST?'. From there, you must press the 'NO' key (Down Arrow) to navigate to the 'EXT. BATT. TEST?' menu.",
+      "evidence": {
+        "document": "uk_firmware.pdf",
+        "locations": [
+          {
+            "chapter": "5",
+            "page": "5"
+          }
+        ],
+        "section": "5.2.3 Battery test (Menu 33)",
+        "visual_element": "Fig. 5.5 Example of the menus shown during the test of an external battery"
+      }
+    },
+    {
+      "category": "Complex Problem",
+      "query": "A user needs to edit a Holiday in the system. They want the holiday to apply to 'All Years' instead of just the current year. Starting from the 'EDIT HOLIDAYS?' (Menu 46) main screen, and assuming they have already selected the specific holiday (e.g., 02:HOLIDAY 2) and entered the dates, what is the menu navigation path to change the application period to 'ALL YEARS'?",
+      "answer": "From the specific holiday menu, the user must press the 'Down Arrow' (PROG) to proceed past the date and daytype selection until they reach the application period menu. If the menu currently shows a specific year (e.g., '2005 ONLY'), they must press the 'Right Arrow' (CHANGE) to toggle it to 'ALL YEARS'.",
+      "evidence": {
+        "document": "uk_firmware.pdf",
+        "locations": [
+          {
+            "chapter": "6",
+            "page": "10"
+          }
+        ],
+        "section": "6.2.6 Editing a holiday (Menu 46)",
+        "visual_element": "Fig. 6.8 Example of the editing of an Holiday... (Flowchart showing the toggle between 'ALL YEARS' and '2005 ONLY')"
+      }
+    }
+  ]

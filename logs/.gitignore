@@ -1,0 +1,8 @@
+# Ignore traces and sessions (can be large, may contain PII)
+query_traces/*.json
+cursor_sessions/*.json
+
+# Keep directory structure
+!.gitkeep
+!.gitignore
+

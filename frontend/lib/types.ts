@@ -40,3 +40,101 @@ export interface SearchQueryParams {
   group_by_page?: boolean;
 }
 
+// Agentic search types
+export type AgenticPayloadType = 
+  | 'result' 
+  | 'error' 
+  | 'status' 
+  | 'response' 
+  | 'decision' 
+  | 'complete';
+
+export interface AgenticResultPayload {
+  objects: Record<string, unknown>[];
+  metadata: Record<string, unknown>;
+  name: string;
+  count: number;
+}
+
+export interface AgenticErrorPayload {
+  message: string;
+  recoverable: boolean;
+  suggestion?: string;
+}
+
+export interface AgenticStatusPayload {
+  message: string;
+}
+
+export interface AgenticResponsePayload {
+  text: string;
+  sources?: { page: number; manual: string }[];
+}
+
+export interface AgenticDecisionPayload {
+  tool: string;
+  reasoning: string;
+}
+
+export interface AgenticCompletePayload {}
+
+export interface AgenticStreamEvent {
+  type: AgenticPayloadType;
+  query_id: string;
+  payload: 
+    | AgenticResultPayload 
+    | AgenticErrorPayload 
+    | AgenticStatusPayload 
+    | AgenticResponsePayload 
+    | AgenticDecisionPayload 
+    | AgenticCompletePayload;
+}
+
+// Parsed result objects for display
+export interface TextChunkResult {
+  content: string;
+  manual_name: string;
+  page_number: number;
+  chunk_type?: string;
+  section_title?: string;
+  bbox?: BoundingBox;
+  page_image_url?: string;
+}
+
+export interface VisualPageResult {
+  page_number: number;
+  asset_manual: string;
+  maxsim_score: number;
+  image_path: string;
+  preview_url?: string;
+}
+
+export interface VisualInterpretationResult {
+  page_number: number;
+  asset_manual: string;
+  interpretation: string;
+  image_path?: string;
+  error?: string;
+}
+
+// Aggregated state for agentic search
+export interface AgenticSearchState {
+  query_id: string | null;
+  status: string;
+  isLoading: boolean;
+  isComplete: boolean;
+  error: string | null;
+  
+  // Results
+  textResults: TextChunkResult[];
+  visualResults: VisualPageResult[];
+  visualInterpretations: VisualInterpretationResult[];
+  
+  // Final response
+  response: string | null;
+  sources: { page: number; manual: string }[];
+  
+  // Decision transparency
+  decisions: { tool: string; reasoning: string }[];
+}
+

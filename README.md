@@ -1,167 +1,211 @@
-# VSM Demo v02 - Technical Asset Manual Search
+# VSM - Visual Search Manual
 
-A local, **dual-pipeline agentic RAG stack** for searching technical asset manuals with visual grounding. Combines fast text-based search with multimodal ColQwen retrieval.
+A **local-first agentic RAG system** for searching technical asset manuals with visual grounding. Runs entirely on Apple Silicon (M3 256GB Mac Studio).
 
-📖 **[Full System Architecture →](docs/ARCHITECTURE.md)**
+## Features
+
+- 🔍 **Dual RAG Pipelines**: Fast text search (bge-m3) + Visual search (ColQwen2.5)
+- 🤖 **Agentic LLM**: gpt-oss:120b makes tool selection decisions
+- 📄 **Visual Grounding**: Bounding boxes overlay on page images
+- ⚡ **Streaming Responses**: Real-time NDJSON output
+- 🏠 **100% Local**: No cloud dependencies, all inference on-device
 
 ## Architecture
 
-- **Dual RAG Pipelines**: Fast vector search (Ollama) + Visual search (ColQwen2.5)
-- **Parsing**: LandingAI Agentic Document Extraction (ADE) for PDF parsing
-- **Vector DB**: Local Weaviate (Docker) with multi-vector support
-- **Backend API**: FastAPI with agentic orchestration and streaming responses
-- **Frontend**: Next.js 16, React 19, Tailwind CSS v4, and shadcn/ui
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Mac Studio (Host)                        │
+│                                                             │
+│  ┌─────────────────┐    ┌─────────────────────────────────┐│
+│  │  Native Ollama  │    │         Application             ││
+│  │  (0.0.0.0:11434)│    │  - API (FastAPI, port 8001)     ││
+│  │                 │    │  - Frontend (Next.js, port 3000)││
+│  │  Models:        │    └─────────────────────────────────┘│
+│  │  - gpt-oss:120b │                                       │
+│  │  - bge-m3       │    host.docker.internal:11434         │
+│  └────────┬────────┘              ▼                        │
+│           │           ┌─────────────────┐                  │
+│           └──────────▶│ Weaviate (8080) │ Docker           │
+│                       │ 1,614 documents │                  │
+│                       └─────────────────┘                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Key Design Decision**: Ollama runs **natively** on macOS (not in Docker) to access full 256GB RAM and Metal GPU acceleration. Weaviate runs in Docker and connects to Native Ollama via `host.docker.internal`.
 
 ## Quick Start
 
 ### Prerequisites
 
-- Python 3.12+ (Conda env `vsm-hva`)
-- Node.js 18.17+
-- Docker & Docker Compose
-- LandingAI API key (set in `.env`)
+- macOS with Apple Silicon (M1/M2/M3)
+- [Ollama](https://ollama.ai) installed natively
+- Docker Desktop
+- Node.js 18+
+- Conda (with `vsm-hva` environment)
 
-### 1. Start Infrastructure
+### 1. Pull Required Models
 
 ```bash
-# Start Weaviate and Ollama
-docker compose up -d
+# LLM for decision-making and text generation (~65GB)
+ollama pull gpt-oss:120b
 
-# Pull embedding model
-docker compose exec ollama ollama pull nomic-embed-text
+# Embeddings for text search (~1.2GB)
+ollama pull bge-m3
 ```
 
-### 2. Ingest Documents
-
-#### Regular RAG Pipeline (Text-based)
+### 2. Start All Services
 
 ```bash
-# Activate conda environment
 conda activate vsm-hva
+./scripts/start.sh
+```
 
+This will:
+1. Kill any conflicting Ollama/Weaviate containers from other projects
+2. Start Native Ollama with optimized settings
+3. Start Weaviate (Docker) connected to Native Ollama
+4. Start the FastAPI backend
+5. Start the Next.js frontend
+
+### 3. Open the App
+
+- **Frontend**: http://localhost:3000
+- **API Docs**: http://localhost:8001/docs
+
+### 4. Stop All Services
+
+```bash
+./scripts/stop.sh
+```
+
+## Ingesting Documents
+
+### Text-based RAG (Fast Search)
+
+```bash
 # Parse PDF with LandingAI ADE
-python scripts/parse_with_landingai.py data/uk_firmware.pdf output_landingai.json
+python scripts/parse_with_landingai.py data/manual.pdf data/output.json
 
-# Generate page previews (needed for both pipelines)
-python scripts/generate_previews.py data/uk_firmware.pdf static/previews/uk_firmware
+# Generate page previews
+python scripts/generate_previews.py data/manual.pdf static/previews/manual
 
 # Ingest into Weaviate
-python scripts/weaviate_ingest_manual.py output_landingai.json "UK Firmware Manual"
+python scripts/weaviate_ingest_manual.py data/output.json "Manual Name"
 ```
 
-#### ColQwen RAG Pipeline (Multimodal - Optional)
+### Visual RAG (ColQwen - Optional)
 
 ```bash
-# Requires preview PNGs (generated above)
-# Downloads ColQwen2.5 model (~8GB) on first run
-python scripts/colqwen_ingest.py "UK Firmware Manual"
+# Requires preview PNGs from above
+python scripts/colqwen_ingest.py "Manual Name"
 ```
 
-**Note:** ColQwen ingestion takes ~10-15 minutes on first run (model download + embedding generation).
+## API Endpoints
 
-### 3. Start Backend API
-
-```bash
-# In one terminal
-uvicorn api.main:app --reload --port 8001
-```
-
-### 4. Start Frontend
-
-```bash
-# In another terminal
-cd frontend
-npm install
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) to use the search interface.
+| Endpoint | Description |
+|----------|-------------|
+| `GET /search?query=...` | Fast vector search |
+| `GET /agentic_search?query=...` | Agentic streaming search (SSE) |
+| `GET /healthz` | Health check |
 
 ## Project Structure
 
 ```
-vsm_demo_v02/
+vsm-v02/
 ├── api/                    # FastAPI backend
-│   └── main.py            # Search API endpoints
-├── frontend/              # Next.js frontend
-│   ├── app/               # Pages and layouts
-│   ├── components/        # React components
-│   └── lib/              # API client and hooks
-├── data/                  # Source PDFs
-├── static/                # Generated assets
-│   ├── manuals/          # PDF files
-│   └── previews/         # Page preview images
-├── scripts/               # Utility scripts
-│   ├── parse_with_landingai.py
-│   ├── weaviate_ingest_manual.py
-│   ├── generate_previews.py
-│   └── weaviate_search_manual.py
-├── docker-compose.yml         # Weaviate + Ollama setup
+│   ├── services/agent.py   # Decision tree orchestrator
+│   ├── services/llm.py     # Ollama/MLX clients
+│   └── services/tools/     # Tool implementations
+├── frontend/               # Next.js 16 + React 19
+├── scripts/
+│   ├── start.sh            # Start all services
+│   ├── stop.sh             # Stop all services
+│   └── weaviate_ingest_manual.py
+├── docker-compose.yml      # Weaviate only (no Ollama!)
+└── static/previews/        # Page PNG images
 ```
 
-## Scripts
+## Models & Memory
 
-### Parsing
-- `scripts/parse_with_landingai.py <pdf_path> <output_json>` - Parse PDF with LandingAI ADE
+| Model | Size | Purpose |
+|-------|------|---------|
+| gpt-oss:120b | ~65GB | LLM (decisions + generation) |
+| bge-m3 | ~1.2GB | Text embeddings (8K context) |
+| ColQwen2.5-v0.2 | ~4GB | Visual retrieval |
+| Qwen3-VL-8B | ~8GB | Visual interpretation (MLX) |
 
-### Ingestion
-- `scripts/weaviate_ingest_manual.py <json_path> <manual_name>` - Ingest parsed chunks into Weaviate
-- `scripts/generate_previews.py [pdf_path] [output_dir]` - Generate PNG previews from PDF
+**Total**: ~78GB, leaving ~178GB for KV cache on 256GB Mac Studio.
 
-### Search
-- `scripts/weaviate_search_manual.py <query>` - CLI search (for testing)
+## Troubleshooting
 
-## API Endpoints
+### "404 Not Found" for Ollama API
 
-- `GET /search?query=<query>&limit=<limit>` - Fast vector search (text-based RAG)
-- `GET /agentic_search?query=<query>` - Agentic streaming search (both pipelines)
-- `GET /healthz` - Health check
-- `GET /static/manuals/<manual>.pdf` - PDF files
-- `GET /static/previews/<manual>/page-<n>.png` - Preview images
+**Cause**: Wrong Ollama instance running (Docker instead of Native).
 
-**Interactive docs:** `http://localhost:8001/docs`
+**Fix**: Run `./scripts/start.sh` - it automatically kills conflicting containers.
 
-## Environment Variables
+### "lookup ollama on 127.0.0.11:53: no such host"
 
-### Backend (`.env`)
+**Cause**: Weaviate container from another project with wrong config.
+
+**Fix**: 
+```bash
+docker stop $(docker ps -q --filter name=weaviate)
+docker rm $(docker ps -aq --filter name=weaviate)
+./scripts/start.sh
 ```
-LANDINGAI_API_KEY=your_key_here
+
+### Embedding failures during ingestion
+
+**Cause**: Model swapping instability in Ollama.
+
+**Fix**: Pre-warm the embedding model:
+```bash
+curl -s http://localhost:11434/api/embed -d '{"model":"bge-m3","input":"warmup","keep_alive":"15m"}'
 ```
 
-### Frontend (`frontend/.env.local`)
+## Logs
 
-> [!TIP]
-> You can copy the example environment file: `cp frontend/.env.example frontend/.env.local`
+```bash
+tail -f /tmp/vsm-ollama.log    # Ollama
+tail -f /tmp/vsm-api.log       # Backend API
+tail -f /tmp/vsm-frontend.log  # Frontend
 ```
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8001
+
+## Debugging Agent Issues
+
+Query traces are auto-saved to `logs/query_traces/` for every `/agentic_search` call.
+
+### When a Query Fails
+
+```bash
+# 1. Find the trace
+ls -la logs/query_traces/
+
+# 2. Run intelligent analysis (uses Gemini 3 Pro's 1M context)
+python scripts/analyze_with_llm.py --gemini-only <trace_id_prefix>
+
+# 3. Apply the suggested fix, then verify
+python scripts/run_benchmark.py --output results.json
 ```
+
+The analyzer loads the entire codebase + all traces into Gemini 3 Pro and returns a concise diagnosis with exact file:line to fix.
+
+See [.cursor/README.md](.cursor/README.md) for the full debugging toolkit documentation.
 
 ## Documentation
 
-- **[System Architecture](docs/ARCHITECTURE.md)** - Complete system design, data flows, deployment
-- **[Regular RAG Pipeline](docs/RAG_PIPELINE_EXPLAINED.md)** - Text-based search deep-dive
-- **[ColQwen Ingestion](docs/COLQWEN_INGESTION_EXPLAINED.md)** - Multimodal search deep-dive
-- **[Testing Guide](TESTING.md)** - Testing procedures and verification
-- **[Frontend README](frontend/README.md)** - Frontend development guide
-- **[Scripts README](scripts/README.md)** - Script usage reference
-
-## Features
-
-- ✅ Semantic search over manual content
-- ✅ Visual grounding with bounding boxes
-- ✅ Page preview images with highlighted regions
-- ✅ Direct PDF page links
-- ✅ Keyword highlighting in results
-- ✅ Responsive UI
+- [Development Workflow](docs/WORKFLOW.md) - How to debug and develop
+- [System Architecture](docs/ARCHITECTURE.md)
+- [Agent Flow Diagram](docs/agent_diagram.md)
+- [RAG Pipeline Explained](docs/RAG_PIPELINE_EXPLAINED.md)
+- [ColQwen Ingestion](docs/COLQWEN_INGESTION_EXPLAINED.md)
 
 ## Tech Stack
 
-- **LandingAI ADE**: Document parsing with layout awareness
-- **Weaviate**: Vector database with Ollama embeddings
-- **FastAPI**: REST API with Pydantic validation
-- **Next.js 16**: React framework with App Router
-- **React 19**: Library for web and native user interfaces
-- **Tailwind CSS v4**: Utility-first styling
-- **shadcn/ui**: Accessible component library
-- **React Query**: Data fetching and caching
-
+- **LLM**: gpt-oss:120b (Native Ollama)
+- **Embeddings**: bge-m3 (Native Ollama)
+- **Vector DB**: Weaviate 1.34 (Docker)
+- **Backend**: Python 3.12, FastAPI
+- **Frontend**: Next.js 16, React 19, Tailwind v4
+- **Parsing**: LandingAI ADE

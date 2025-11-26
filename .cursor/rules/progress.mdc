@@ -1,0 +1,32 @@
+---
+description: "Current project state - updated after fixes"
+alwaysApply: true
+---
+
+# Current Progress
+
+## Recent Fixes (keep max 5)
+
+| Date | Issue | Fix | File |
+|------|-------|-----|------|
+| 2024-11-26 | Table content stripped during ingestion | Fixed regex order in clean_content() | `scripts/weaviate_ingest_manual.py` |
+| 2024-11-26 | Vector search missed tables | Changed to hybrid search (vector + BM25) | `api/services/search.py` |
+| 2024-11-26 | LLM filtered by chunk_type="text" | Removed chunk_type param from tool | `api/services/tools/search_tools.py` |
+
+## Known Issues
+
+_None currently tracked_
+
+## Last Benchmark
+
+```
+Date: 2024-11-26
+Status: Pending re-run after fixes
+```
+
+---
+
+**Note to Coding Agent:** After successful fix, update this file:
+1. Add new fix to table (remove oldest if > 5)
+2. Update "Last Benchmark" if you ran one
+3. Add to "Known Issues" if something is still broken

@@ -1,0 +1,8 @@
+docs/archive/
+
+# Elysia reference - only ignore non-essential parts
+# Keep elysia/ source visible for reference
+docs/elysia-source-code-for-reference-only/tests/
+docs/elysia-source-code-for-reference-only/docs/
+docs/elysia-source-code-for-reference-only/img/
+docs/elysia-source-code-for-reference-only/.github/

@@ -71,11 +71,12 @@ def clean_content(text: str) -> str:
     # Remove flowchart blocks (<::...::>)
     cleaned = FLOWCHART_BLOCK_RE.sub("", cleaned)
     
-    # For table chunks, try to extract readable text from cells
-    # Otherwise, remove table markup entirely
+    # For table chunks, extract readable text from cells
     if "<table" in cleaned.lower():
-        # Try to extract cell content as plain text
-        # Remove table structure but keep cell text
+        # Remove opening/closing table tags but KEEP content
+        cleaned = re.sub(r"<table[^>]*>", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"</table>", "", cleaned, flags=re.IGNORECASE)
+        # Convert table structure to readable text
         cleaned = re.sub(r"<tr[^>]*>", "\n", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"</tr>", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"<t[dh][^>]*>", " | ", cleaned, flags=re.IGNORECASE)
@@ -84,8 +85,6 @@ def clean_content(text: str) -> str:
         cleaned = re.sub(r"</thead>", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"<tbody[^>]*>", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"</tbody>", "", cleaned, flags=re.IGNORECASE)
-        # Remove remaining table tags
-        cleaned = TABLE_TAG_RE.sub("", cleaned)
     
     # Remove all remaining HTML tags
     cleaned = HTML_TAG_RE.sub("", cleaned)
@@ -188,8 +187,9 @@ def ensure_collection(client: weaviate.WeaviateClient):
     coll = client.collections.create(
         name=COLLECTION_NAME,
         vector_config=Configure.Vectors.text2vec_ollama(
-            api_endpoint="http://ollama:11434",
-            model="nomic-embed-text",
+            # Connect to Native Ollama on host machine
+            api_endpoint="http://host.docker.internal:11434",
+            model="bge-m3",  # Better retrieval for technical documentation
         ),
         properties=[
             Property(name="manual_name", data_type=DataType.TEXT),
@@ -226,7 +226,8 @@ def main():
         
         print(f"[Weaviate] Ingesting chunks into collection {COLLECTION_NAME}...")
         count = 0
-        with coll.batch.fixed_size(batch_size=200) as batch:
+        # Single-threaded, small batches to prevent Ollama EOF errors
+        with coll.batch.fixed_size(batch_size=20, concurrent_requests=1) as batch:
             for ch in chunks:
                 props = {
                     "manual_name": manual_name,
