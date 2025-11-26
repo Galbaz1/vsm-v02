@@ -366,8 +366,9 @@ class TreeData:
                 for j, task_entry in enumerate(task_prompt["task"]):
                     if task_entry["task"] == task:
                         task_idx = j
-                    if task_entry.get("iteration") == num_iterations:
-                        iteration_found = True
+                        # Only set iteration_found if THIS task has the iteration
+                        if task_entry.get("iteration") == num_iterations:
+                            iteration_found = True
                 break  # Stop once we find the matching prompt
         
         # Case 1: New prompt - create new entry
