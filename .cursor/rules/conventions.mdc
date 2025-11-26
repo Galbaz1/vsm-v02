@@ -7,14 +7,14 @@ alwaysApply: true
 The current date is 2025-11-26. --always ensure you use this date when writing code or documentation, or when doing online research.
 
 ## Stack
-- **Backend**: Python 3.12, FastAPI, Weaviate 1.34
+- **Backend**: Python 3.12, FastAPI (Streaming NDJSON), Weaviate 1.34
 - **Frontend**: Next.js 16, React 19, Tailwind v4
 - **Inference**: Native Ollama (gpt-oss), MLX (VLM only)
 - **Env**: Conda `vsm-hva`
 
 ## Models
 | Role | Model | Runtime | Memory |
-|------|-------|---------|--------|
+|---|----|---|-----|
 | LLM (decision + tools) | `gpt-oss:120b` | Native Ollama | ~65GB |
 | Embeddings | `bge-m3` | Native Ollama | ~1.2GB |
 | Vision | `Qwen3-VL-8B` | MLX | ~8GB |
@@ -42,24 +42,28 @@ The current date is 2025-11-26. --always ensure you use this date when writing c
 ```
 api/
 ├── main.py              # FastAPI entry
-├── services/agent.py    # Decision tree orchestrator
-├── services/llm.py      # OllamaClient, MLXVLMClient
-├── services/search.py   # Weaviate vector search
-├── services/tools/      # Tool implementations
+├── core/                # Config & initialization
+├── schemas/             # Pydantic models
+├── services/            # Business logic (Agent, LLM, Search)
+│   ├── agent.py         # Decision tree orchestrator
+│   └── tools/           # Tool implementations
 └── endpoints/           # Thin routes only
-scripts/                 # Run from project root
+scripts/
+├── weaviate_ingest_manual.py # Text ingestion
+├── colqwen_ingest.py         # Visual ingestion
+└── ...
 static/previews/         # Page PNGs
 ```
 
 ## Collections
 | Collection | Vectorizer | Use |
-|------------|-----------|-----|
+|---|-----|-----|
 | `AssetManual` | bge-m3 (8K context) | Text chunks |
 | `PDFDocuments` | ColQwen2.5 | Page images (multi-vector) |
 
 ## Ports
 | Service | Port |
-|---------|------|
+|---|---|
 | API | 8001 |
 | Frontend | 3000 |
 | Weaviate | 8080 |
@@ -75,12 +79,13 @@ ollama pull bge-m3          # Pull embeddings
 ```
 
 ## Rules
-1. Logic in services, not endpoints
-2. Run scripts from project root
-3. Use `with weaviate.connect_to_local()` context manager
-4. Weaviate ingestion: `api_endpoint="http://host.docker.internal:11434"`
-5. Single LLM (gpt-oss) for decision + complex; MLX only for VLM
-6. Tools yield `Result` with `llm_message` for decision agent context
+1. **Clean Arch**: Logic in `services/`, thin `endpoints/`, models in `schemas/`.
+2. **Streaming**: API responses must be NDJSON/SSE (don't break this).
+3. Run scripts from project root
+4. Use `with weaviate.connect_to_local()` context manager
+5. Weaviate ingestion: `api_endpoint="http://host.docker.internal:11434"`
+6. Single LLM (gpt-oss) for decision + complex; MLX only for VLM
+7. Tools yield `Result` with `llm_message` for decision agent context
 
 ## ⚠️ Debugging Agent Issues
 
@@ -105,3 +110,6 @@ When user types a command, check `.cursor/commands/` for instructions:
 - `/debug` → Quick debugging workflow
 - `/analyze` → **Analysis Agent**: Research issues, create diagnosis file (NO code edits)
 - `/implement` → **Coding Agent**: Apply fixes from analysis file (NO research)
+
+## Progress Tracking
+See `.cursor/rules/progress.mdc` for recent fixes and known issues.

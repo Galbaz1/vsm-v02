@@ -9,9 +9,12 @@ Original: https://github.com/weaviate/elysia/blob/main/elysia/tree/objects.py
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from copy import deepcopy
 import json
+
+if TYPE_CHECKING:
+    from api.knowledge import Atlas
 
 
 class Environment:
@@ -284,6 +287,9 @@ class TreeData:
     # Current datetime for temporal context
     datetime_ref: Dict[str, str] = field(default_factory=dict)
     
+    # Domain knowledge for agent guidance (optional)
+    atlas: Optional["Atlas"] = None
+    
     def __post_init__(self):
         """Set datetime reference after init."""
         now = datetime.now()
@@ -325,7 +331,7 @@ class TreeData:
     
     def to_json(self) -> Dict:
         """Serialize TreeData to JSON."""
-        return {
+        data = {
             "user_prompt": self.user_prompt,
             "environment": self.environment.to_json(),
             "conversation_history": self.conversation_history,
@@ -336,10 +342,19 @@ class TreeData:
             "collection_names": self.collection_names,
             "datetime_ref": self.datetime_ref,
         }
+        if self.atlas is not None:
+            data["atlas"] = self.atlas.model_dump()
+        return data
     
     @classmethod
     def from_json(cls, data: Dict) -> "TreeData":
         """Deserialize TreeData from JSON."""
+        # Handle atlas deserialization
+        atlas = None
+        if "atlas" in data and data["atlas"] is not None:
+            from api.knowledge import Atlas
+            atlas = Atlas.model_validate(data["atlas"])
+        
         tree_data = cls(
             user_prompt=data.get("user_prompt", ""),
             environment=Environment.from_json(data.get("environment", {})),
@@ -349,6 +364,7 @@ class TreeData:
             num_iterations=data.get("num_iterations", 0),
             max_iterations=data.get("max_iterations", 10),
             collection_names=data.get("collection_names", []),
+            atlas=atlas,
         )
         tree_data.datetime_ref = data.get("datetime_ref", {})
         return tree_data
@@ -356,7 +372,6 @@ class TreeData:
 
 # Import Result here to avoid circular imports
 # This is defined in api/schemas/agent.py
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from api.schemas.agent import Result
 

@@ -45,9 +45,25 @@ environment[tool_name][result_name] = [{"objects": [...], "metadata": {...}}]
 ```
 
 ## What We DON'T Use
-- **DSPy** - Direct Ollama prompting instead
 - **Dockerized Ollama** - Can't access full RAM/GPU
 - **Multiple LLMs** - Single gpt-oss for all text tasks
+
+## DSPy Migration (PLANNED)
+> See `PLAN_DSPY_MIGRATION.md` and `TODO.md` for implementation details
+
+**Status:** Planning complete, implementation not started
+
+**Why DSPy:**
+- Structured prompts with typed I/O (no manual JSON parsing)
+- Auto-optimization with MIPROv2
+- LLM-as-Judge for semantic evaluation
+- Context injection pattern (VSMChainOfThought)
+
+**Key Additions:**
+- `api/knowledge/` - Atlas + domain knowledge (ThorGuard)
+- `api/prompts/` - DSPy Signatures
+- `api/evaluation/` - Judge service + metrics
+- `api/endpoints/benchmark.py` - Interactive benchmark API
 
 ## Anti-Patterns
 - Don't add abstractions for one-time operations

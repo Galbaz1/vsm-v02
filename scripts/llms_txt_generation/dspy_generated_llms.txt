@@ -1,0 +1,425 @@
+# Project Purpose
+DSPy provides a declarative programming framework for building, evaluating, and automatically optimizing language‑model‑driven applications. Its primary goals are to:
+
+1. Enable composable AI pipelines using Python code instead of brittle prompt strings.  
+2. Separate concerns between model invocation (signatures, adapters), program logic (modules, primitives), and optimization (teleprompt/optimizers).  
+3. Automate prompt and weight improvement through a variety of optimizer algorithms (Bootstrap, GEPA, COPRO, etc.).  
+4. Support multiple back‑ends (OpenAI, local LMs, Databricks, embedding services) and retrieval mechanisms.  
+5. Facilitate evaluation and debugging with built‑in metrics, streaming, and logging utilities.  
+6. Provide extensive documentation, tutorials, and community resources to lower the barrier for developers and researchers.
+
+# Key Concepts
+- **Signature** – Typed definition of inputs and outputs for an LLM call.  
+- **Primitive** – Low‑level wrapper around a model or tool that conforms to a Signature.  
+- **Module** – Reusable component that composes primitives (and other modules) via a `forward` method.  
+- **Adapter** – Pre‑ or post‑processing layer that transforms data to match a Signature (e.g., prompt prefixes).  
+- **Predictor** – High‑level executor that runs a module (with adapters) on concrete inputs.  
+- **Teleprompt** – Interface for automatic prompt/program improvement.  
+- **Optimizer** – Algorithm that searches for better prompts/demonstrations (BootstrapFewShot, GEPA, COPRO, etc.).  
+- **Retrieval / Embedding** – Primitives for vector‑store lookup and dense representation generation.  
+- **EvaluationMetric** – Metric implementations (ExactMatch, SemanticF1, PassageMatch, etc.).  
+- **Streaming** – Utilities (`streamify`, `asyncify`, `StreamLogger`) for incremental result handling.  
+- **Caching** – In‑memory or persistent cache to avoid redundant model calls.  
+- **ParallelExecution** – Scheduler that runs independent primitives concurrently.  
+- **ChainOfThought / ReAct / ProgramOfThought** – Advanced prompting patterns for reasoning and tool use.  
+- **BestOfN / Refine** – Strategies for sampling multiple completions and iteratively improving answers.  
+- **KNNFewShot / MultiChainComparison** – Retrieval‑augmented few‑shot and multi‑program comparison techniques.
+
+# Architecture Overview
+```
++---------------------------------------------------------------+
+|                       User Code (Python)                    |
+|  - Define Signatures, Modules, Primitives, Adapters,         |
+|    Predictors, Teleprompts, Optimizers, Retrieval, etc.      |
++---------------------------+-----------------------------------+
+                            |
+                            v
++---------------------------+-----------------------------------+
+|               DSPy Core Runtime & Scheduler                  |
+|  - dspy.predict orchestrates execution                        |
+|  - Streaming & async utilities (streamify, asyncify)         |
+|  - Caching layer (clients/cache.py)                          |
+|  - Parallelizer & retry logic                                |
++---------------------------+-----------------------------------+
+                            |
+                            v
++---------------------------+-----------------------------------+
+|               Model & Service Clients                         |
+|  - dspy.clients.lm (OpenAI, local, Databricks, …)            |
+|  - dspy.clients.embedding (embedding models)                  |
+|  - Retrieval back‑ends (embeddings.py, weaviate_rm.py, …)    |
++---------------------------+-----------------------------------+
+                            |
+                            v
++---------------------------+-----------------------------------+
+|               Optimizer / Teleprompt Layer                    |
+|  - teleprompt/teleprompt.py (base class)                     |
+|  - Specific algorithms: Bootstrap, GEPA, COPRO, KNNFewShot,  |
+|    Ensemble, SIMBA, …                                        |
+|  - Hyper‑parameter search utilities (optuna, random)        |
++---------------------------+-----------------------------------+
+                            |
+                            v
++---------------------------+-----------------------------------+
+|               Evaluation & Metrics                            |
+|  - dspy.evaluate (auto_evaluation, metrics)                  |
+|  - Built‑in metrics: SemanticF1, ExactMatch, PassageMatch    |
+|  - Result objects (EvaluationResult)                         |
++---------------------------+-----------------------------------+
+                            |
+                            v
++---------------------------+-----------------------------------+
+|               Persistence & Utilities                         |
+|  - utils/saving.py (save/load programs)                      |
+|  - Logging, usage tracking, annotation helpers               |
+|  - Documentation generation (mkdocs scripts)                |
++---------------------------------------------------------------+
+```
+
+* **User code** declares the desired LM interaction declaratively.  
+* The **core runtime** resolves dependencies, handles streaming, caching, and parallel execution.  
+* **Clients** abstract concrete LLM or embedding services.  
+* The **teleprompt/optimizer layer** can automatically improve prompts/demonstrations or fine‑tune models.  
+* **Evaluation** utilities let developers measure performance and iterate.  
+
+Together these components enable a modular, self‑improving AI development workflow.
+
+# Important Directories
+- `dspy/` – Core library code, subdivided into adapters, clients, predict, teleprompt, etc.  
+- `dspy/adapters/` – Adapters for converting between DSPy primitives and external data formats.  
+- `dspy/clients/` – Language model and embedding client wrappers (OpenAI, Databricks, local LM).  
+- `dspy/datasets/` – Helpers for loading benchmark datasets.  
+- `dspy/evaluate/` – Evaluation framework and metric implementations.  
+- `dspy/predict/` – High‑level prediction modules (CoT, ReAct, PoT, KNN, parallel, etc.).  
+- `dspy/primitives/` – Fundamental building blocks (Module, Example, Prediction, etc.).  
+- `dspy/teleprompt/` – Optimization/finetuning strategies (Bootstrap, GEPA, Ensemble, etc.).  
+- `dspy/utils/` – Miscellaneous utilities (caching, logging, async helpers).  
+- `docs/` – MkDocs source for documentation, tutorials, API reference, static assets.  
+- `tests/` – Pytest suite covering all functionality.  
+- `.github/` – CI/CD workflows, issue/PR templates, release scripts.
+
+# Entry Points
+- `dspy/__init__.py` – Package entry point, re‑exports public API.  
+- `dspy/predict/predict.py` – High‑level `predict` function used by most examples.  
+- `dspy/teleprompt/teleprompt.py` – Core teleprompt/optimization interface.  
+- `dspy/evaluate/evaluate.py` – Evaluation entry point for running metrics on predictions.  
+- `dspy/adapters/json_adapter.py` – Example of a commonly used adapter.
+
+# Development Info
+## Setup & Installation
+```bash
+# Clone the repo
+git clone https://github.com/stanfordnlp/dspy.git
+cd dspy
+
+# Install in editable mode with development extras
+pip install -e .[dev]
+
+# Optional extras (e.g., Anthropic, Weaviate, MCP, LangChain)
+pip install "dspy[anthropic]" "dspy[weaviate]" "dspy[mcp]" "dspy[langchain]"
+```
+
+## Testing
+```bash
+pytest                # run the full test suite
+pytest -k "teleprompt"  # run only teleprompt‑related tests
+```
+CI runs the same tests on Linux using the matrix defined in `.github/workflows/run_tests.yml`.
+
+## Linting & Formatting
+```bash
+ruff check .          # static analysis
+ruff format .         # auto‑formatting
+pre-commit run --all-files   # runs ruff, black, isort, etc. via pre‑commit hooks
+```
+
+## Documentation
+```bash
+# Build and serve locally
+mkdocs serve
+# Build static site
+mkdocs build
+```
+Documentation sources live under `docs/`; API reference pages are generated from the package using `datamodel_code_generator` and the `dspy/__metadata__.py` file.
+
+## Release Process (automated)
+The `build_and_release.yml` workflow triggers on tags. It:
+1. Installs build dependencies (`setuptools`, `build`).  
+2. Executes the `build-and-release.md` script to create source & wheel distributions.  
+3. Publishes to PyPI using the version defined in `pyproject.toml`.
+
+## Tooling Configuration (`pyproject.toml`)
+- **Build system**: `setuptools>=77`.  
+- **Dependencies**: core deps listed under `project.dependencies`.  
+- **Optional dependencies**: defined in `project.optional-dependencies`.  
+- **Coverage**: configured under `[tool.coverage.*]`.  
+- **Ruff**: linting rules, line length, per‑file ignores, import ordering.  
+- **Pytest**: custom warning filters in `[tool.pytest.ini_options]`.
+
+## Typical Development Cycle
+1. Create a feature branch.  
+2. Implement changes inside `dspy/` (add primitives, adapters, teleprompt strategies, etc.).  
+3. Add or update tests in `tests/`.  
+4. Run `pytest` locally, fix failures.  
+5. Run `ruff`; ensure style passes.  
+6. Commit – pre‑commit will enforce formatting.  
+7. Open a Pull Request; GitHub Actions run lint, tests, and docs builds.  
+8. After approval, merging triggers the release workflow which publishes a new version to PyPI.
+
+# Usage Examples
+```python
+# --------------------------------------------------------------
+# 1️⃣  Define a Signature – the “type” of the LLM call
+# --------------------------------------------------------------
+from dsp import Signature
+
+QA = Signature(
+    name="QA",
+    inputs={"question": str},
+    outputs={"answer": str},
+)
+```
+
+```python
+# --------------------------------------------------------------
+# 2️⃣  Primitive: a low‑level LLM invocation (OpenAI backend)
+# --------------------------------------------------------------
+from dsp.primitives import OpenAI
+
+openai_qa = OpenAI(
+    model="gpt-4o-mini",
+    temperature=0.0,
+    max_tokens=256,
+    signature=QA,
+)
+```
+
+```python
+# --------------------------------------------------------------
+# 3️⃣  Module: compose primitives into a reusable component
+# --------------------------------------------------------------
+from dsp import Module
+
+class SimpleQAModule(Module):
+    def __init__(self):
+        super().__init__(signature=QA)
+
+    def forward(self, question: str) -> str:
+        answer = openai_qa(question=question)
+        return answer
+
+simple_qa = SimpleQAModule()
+```
+
+```python
+# --------------------------------------------------------------
+# 4️⃣  Adapter: preprocess inputs (e.g., add a prompt prefix)
+# --------------------------------------------------------------
+from dsp.adapters import PromptAdapter
+
+prefix_adapter = PromptAdapter(
+    signature=QA,
+    prefix="You are a helpful assistant. Answer the following question concisely:\n\n",
+)
+
+simple_qa_with_adapter = prefix_adapter(simple_qa)
+```
+
+```python
+# --------------------------------------------------------------
+# 5️⃣  Predictor: execute the program (module + adapter) on data
+# --------------------------------------------------------------
+from dsp import Predictor
+
+predictor = Predictor(simple_qa_with_adapter)
+
+result = predictor(question="What is the capital of France?")
+print(result["answer"])   # → "Paris"
+```
+
+```python
+# --------------------------------------------------------------
+# 6️⃣  Teleprompt + Optimizer: automatically improve the prompt
+# --------------------------------------------------------------
+from dsp.teleprompt import Teleprompt
+from dsp.optimizers import BootstrapFewShot
+
+tele = Teleprompt(
+    module=simple_qa,
+    optimizer=BootstrapFewShot(
+        n_shots=5,
+        max_iters=30,
+        temperature=0.0,
+    ),
+    signature=QA,
+)
+
+validation_set = [
+    {"question": "Who wrote 'Pride and Prejudice'?", "answer": "Jane Austen"},
+    {"question": "What is the boiling point of water in Celsius?", "answer": "100"},
+    # … more examples …
+]
+
+optimized_module = tele.optimize(validation_set)
+
+opt_predictor = Predictor(optimized_module)
+print(opt_predictor(question="What is the tallest mountain on Earth?")["answer"])
+```
+
+```python
+# --------------------------------------------------------------
+# 7️⃣  Retrieval + Embedding primitives
+# --------------------------------------------------------------
+from dsp.primitives import Embedding, Retrieval
+
+embed = Embedding(
+    model="text-embedding-ada-002",
+    signature=Signature(
+        name="Embed",
+        inputs={"text": str},
+        outputs={"vector": list},
+    ),
+)
+
+class InMemoryVectorStore:
+    def __init__(self):
+        self.vectors = []   # (id, vector, metadata)
+
+    def add(self, doc_id, vector, metadata=None):
+        self.vectors.append((doc_id, vector, metadata))
+
+    def query(self, vector, top_k=3):
+        import numpy as np
+        vec = np.array(vector)
+        sims = [
+            (doc_id, np.dot(vec, np.array(v)) /
+             (np.linalg.norm(vec) * np.linalg.norm(v)))
+            for doc_id, v, _ in self.vectors
+        ]
+        sims.sort(key=lambda x: x[1], reverse=True)
+        return [doc_id for doc_id, _ in sims[:top_k]]
+
+store = InMemoryVectorStore()
+
+docs = {
+    "doc1": "Paris is the capital of France.",
+    "doc2": "The Eiffel Tower is located in Paris.",
+    "doc3": "Berlin is the capital of Germany."
+}
+for doc_id, text in docs.items():
+    vec = embed(text=text)["vector"]
+    store.add(doc_id, vec)
+
+retrieval = Retrieval(
+    signature=Signature(
+        name="Retrieve",
+        inputs={"query": str},
+        outputs={"doc_ids": list},
+    ),
+    embed=embed,
+    store=store,
+    top_k=2,
+)
+
+retrieved = retrieval(query="Where is the Eiffel Tower?")
+print(retrieved["doc_ids"])   # → ['doc2', 'doc1']
+```
+
+```python
+# --------------------------------------------------------------
+# 8️⃣  Evaluation Metric + Streaming
+# --------------------------------------------------------------
+from dsp.metrics import ExactMatch
+from dsp.streaming import StreamLogger
+
+exact_match = ExactMatch()
+logger = StreamLogger()
+
+test_set = [
+    {"question": "Who discovered penicillin?", "answer": "Alexander Fleming"},
+    {"question": "What is the speed of light in vacuum (m/s)?", "answer": "299792458"},
+    # … more examples …
+]
+
+scores = []
+for example in test_set:
+    pred = opt_predictor(question=example["question"])
+    logger.log(example["question"], pred["answer"])
+    scores.append(exact_match(example["answer"], pred["answer"]))
+    logger.log("score", scores[-1])
+
+print(f"Average ExactMatch: {sum(scores)/len(scores)}")
+```
+
+```python
+# --------------------------------------------------------------
+# 🔟  Advanced Prompting Patterns
+# --------------------------------------------------------------
+from dsp.primitives import BestOfN, Refine, BestOfN, Refine, BestOfN, Refine
+
+# 10a️⃣  Chain‑of‑Thought
+from dsp.adapters import PromptAdapter
+cot_adapter = PromptAdapter(
+    signature=QA,
+    prefix="Think step‑by‑step before answering:\n\n",
+)
+cot_module = cot_adapter(simple_qa)
+cot_predictor = Predictor(cot_module)
+print(cot_predictor(question="Why does rain fall?")["answer"])
+
+# 10b️⃣  ReAct (tool use)
+from dsp.primitives import ReAct
+
+react = ReAct(
+    primitive=openai_qa,
+    tool_descriptions={"calculator": "Performs arithmetic operations"},
+    signature=QA,
+)
+
+react_module = Module(signature=QA)
+react_module.forward = lambda question: react(question=question)["answer"]
+react_predictor = Predictor(react_module)
+print(react_predictor(question="What is 12 * 7?")["answer"])
+
+# 10c️⃣  Best‑of‑N
+from dsp.primitives import BestOfN
+
+best_of_3 = BestOfN(
+    primitive=openai_qa,
+    n=3,
+    selector=lambda completions: max(completions,
+                                     key=lambda c: len(c["answer"])),
+)
+
+best_module = Module(signature=QA)
+best_module.forward = lambda question: best_of_3(question=question)["answer"]
+best_predictor = Predictor(best_module)
+print(best_predictor(question="Explain why the sky is blue.")["answer"])
+
+# 10d️⃣  Refine
+from dsp.primitives import Refine
+
+refine = Refine(
+    base=openai_qa,
+    refinement_prompt=(
+        "The previous answer was:\n{answer}\n\n"
+        "Please improve it, making it clearer and more accurate."
+    ),
+    signature=QA,
+)
+
+refine_module = Module(signature=QA)
+refine_module.forward = lambda question: refine(question=question)["answer"]
+refine_predictor = Predictor(refine_module)
+print(refine_predictor(question="Summarize the plot of 'Inception'.")["answer"])
+```
+
+```python
+# --------------------------------------------------------------
+# 🔟  Parallel Execution & Caching
+# --------------------------------------------------------------
+from dsp.execution import Parallel, Cache
+from dsp import Signature
+
+parallel = Parallel(
+    primitives=[openai_qa, openai_qa],
