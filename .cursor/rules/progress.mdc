@@ -17,7 +17,16 @@ alwaysApply: true
 
 ## Known Issues
 
-_None currently tracked_
+| Issue | Location | Impact |
+|-------|----------|--------|
+| Hardcoded paths | `visual_tools.py:194,390` | Breaks on non-lab machines |
+| Empty config.py | `api/core/config.py` | Missing VSM_MODE, provider settings |
+
+## Active Migration
+
+**Cloud Migration in Progress** - See `TODO.md` and `docs/cloud-migration/`
+- Phase 3: Provider Layer (next)
+- Goal: `VSM_MODE=local|cloud` toggle
 
 ## Last Benchmark
 

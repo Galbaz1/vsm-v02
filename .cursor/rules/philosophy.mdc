@@ -5,9 +5,9 @@ alwaysApply: true
 # Philosophy & Vision
 
 ## Core Principles
-1. **Local-first** - All inference on M3 256GB Mac Studio
-2. **Native Ollama** - Must run natively (not Docker) to access full RAM/Metal
-3. **Dual-pipeline** - Text RAG (bge-m3) + ColQwen (visual) stay separate
+1. **Mode-switchable** - `VSM_MODE=local|cloud` via Provider abstraction
+2. **Native Ollama (local)** - Must run natively (not Docker) to access full RAM/Metal
+3. **Dual-pipeline** - Text RAG + Visual RAG stay separate (both modes)
 4. **Visual grounding** - BBoxes and page images are core, not optional
 
 ## Memory Budget (M3 256GB)
@@ -45,25 +45,25 @@ environment[tool_name][result_name] = [{"objects": [...], "metadata": {...}}]
 ```
 
 ## What We DON'T Use
-- **Dockerized Ollama** - Can't access full RAM/GPU
-- **Multiple LLMs** - Single gpt-oss for all text tasks
+- **Dockerized Ollama** - Can't access full RAM/GPU (local mode)
+- **Multiple LLMs per mode** - Single LLM for all text tasks
 
-## DSPy Migration (PLANNED)
-> See `PLAN_DSPY_MIGRATION.md` and `TODO.md` for implementation details
+## Cloud Migration (IN PROGRESS)
+> See `TODO.md` and `docs/cloud-migration/` for full plan
 
-**Status:** Planning complete, implementation not started
+**Status:** Phase 3 (Provider Layer) ready to start
 
-**Why DSPy:**
-- Structured prompts with typed I/O (no manual JSON parsing)
-- Auto-optimization with MIPROv2
-- LLM-as-Judge for semantic evaluation
-- Context injection pattern (VSMChainOfThought)
+| Mode | LLM | VLM | Embeddings | Vector DB |
+|------|-----|-----|------------|-----------|
+| Local | gpt-oss:120b (Ollama) | Qwen3-VL-8B (MLX) | bge-m3 | Weaviate Docker |
+| Cloud | Gemini 2.5 Flash | Gemini 2.5 Flash | Jina v4 + **Serverless Worker** | Weaviate Cloud |
 
-**Key Additions:**
-- `api/knowledge/` - Atlas + domain knowledge (ThorGuard)
-- `api/prompts/` - DSPy Signatures
-- `api/evaluation/` - Judge service + metrics
-- `api/endpoints/benchmark.py` - Interactive benchmark API
+**Critical:** Jina API does NOT expose multi-vector for images → Serverless Worker required.
+
+## DSPy Integration (Phase 4)
+- `api/knowledge/` ✅ Atlas + ThorGuard domain knowledge
+- `api/prompts/` → DSPy Signatures (pending)
+- Compiled prompts saved per-mode: `api/prompts/local/`, `api/prompts/cloud/`
 
 ## Anti-Patterns
 - Don't add abstractions for one-time operations

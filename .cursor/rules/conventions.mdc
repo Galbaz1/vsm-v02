@@ -9,16 +9,16 @@ The current date is 2025-11-26. --always ensure you use this date when writing c
 ## Stack
 - **Backend**: Python 3.12, FastAPI (Streaming NDJSON), Weaviate 1.34
 - **Frontend**: Next.js 16, React 19, Tailwind v4
-- **Inference**: Native Ollama (gpt-oss), MLX (VLM only)
+- **Inference**: Mode-switchable via `VSM_MODE` env var
 - **Env**: Conda `vsm-hva`
 
-## Models
-| Role | Model | Runtime | Memory |
-|---|----|---|-----|
-| LLM (decision + tools) | `gpt-oss:120b` | Native Ollama | ~65GB |
-| Embeddings | `bge-m3` | Native Ollama | ~1.2GB |
-| Vision | `Qwen3-VL-8B` | MLX | ~8GB |
-| Visual Retrieval | `ColQwen2.5-v0.2` | PyTorch | ~4GB |
+## Models (by Mode)
+| Role | Local | Cloud |
+|------|-------|-------|
+| LLM | `gpt-oss:120b` (Ollama) | Gemini 2.5 Flash |
+| VLM | `Qwen3-VL-8B` (MLX) | Gemini 2.5 Flash |
+| Embeddings | `bge-m3` (Ollama) | Jina v4 |
+| Visual Retrieval | ColQwen2.5-v0.2 | **Serverless Worker** (Jina v4) |
 
 ## Architecture
 ```
@@ -42,17 +42,22 @@ The current date is 2025-11-26. --always ensure you use this date when writing c
 ```
 api/
 ├── main.py              # FastAPI entry
-├── core/                # Config & initialization
+├── core/
+│   ├── config.py        # Settings + VSM_MODE
+│   └── providers/       # LLM/VLM/Embed/VectorDB abstractions
 ├── schemas/             # Pydantic models
-├── services/            # Business logic (Agent, LLM, Search)
+├── services/            # Business logic (Agent, Search)
 │   ├── agent.py         # Decision tree orchestrator
-│   └── tools/           # Tool implementations
+│   └── tools/           # Tool implementations (use providers!)
+├── prompts/             # DSPy signatures + compiled modules
+│   ├── local/           # Optimized for gpt-oss
+│   └── cloud/           # Optimized for Gemini
 └── endpoints/           # Thin routes only
 scripts/
 ├── weaviate_ingest_manual.py # Text ingestion
-├── colqwen_ingest.py         # Visual ingestion
+├── cloud_ingest.py           # Cloud ingestion (pending)
 └── ...
-static/previews/         # Page PNGs
+docs/cloud-migration/    # Architecture docs
 ```
 
 ## Collections
@@ -82,10 +87,10 @@ ollama pull bge-m3          # Pull embeddings
 1. **Clean Arch**: Logic in `services/`, thin `endpoints/`, models in `schemas/`.
 2. **Streaming**: API responses must be NDJSON/SSE (don't break this).
 3. Run scripts from project root
-4. Use `with weaviate.connect_to_local()` context manager
-5. Weaviate ingestion: `api_endpoint="http://host.docker.internal:11434"`
-6. Single LLM (gpt-oss) for decision + complex; MLX only for VLM
-7. Tools yield `Result` with `llm_message` for decision agent context
+4. **Provider Pattern**: Use `get_llm()`, `get_vlm()`, `get_embeddings()`, `get_vectordb()` - never direct clients
+5. Weaviate ingestion (local): `api_endpoint="http://host.docker.internal:11434"`
+6. Tools yield `Result` with `llm_message` for decision agent context
+7. **Mode-agnostic tools**: Tools call providers, providers handle local/cloud
 
 ## ⚠️ Debugging Agent Issues
 
