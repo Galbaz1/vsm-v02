@@ -205,7 +205,7 @@ class TextResponseTool(Tool):
     """
     Tool that generates a text response to end the conversation.
     
-    Uses gpt-oss:120b via Ollama for streaming response generation.
+    Uses configured LLM provider (Ollama or Gemini) for response generation.
     This is typically used as the final tool in a chain to synthesize
     an answer from the retrieved data.
     """
@@ -262,7 +262,17 @@ Answer:"""
         sources = []
         total_chars = 0
         
+        # Flatten hybrid search results if present
+        flattened_objects = []
         for obj in all_objects:
+            # Handle HybridSearchTool nested structure
+            if "text_chunks" in obj or "visual_pages" in obj:
+                flattened_objects.extend(obj.get("text_chunks", []))
+                flattened_objects.extend(obj.get("visual_pages", []))
+            else:
+                flattened_objects.append(obj)
+        
+        for obj in flattened_objects:
             # Build source reference
             page = obj.get("page_number")
             manual = obj.get("manual_name") or obj.get("asset_manual", "Manual")
@@ -276,12 +286,12 @@ Answer:"""
             if content:
                 # Text content from FastVectorSearch or VLM interpretation
                 chunk_text = f"[Page {page}, {manual}]: {content}"
-            elif obj.get("maxsim_score") is not None:
+            elif obj.get("maxsim_score") is not None or obj.get("score") is not None:
                 # Visual result from ColQwen - describe what was found
-                score = obj.get("maxsim_score", 0)
-                image_path = obj.get("image_path", "")
-                preview_url = obj.get("preview_url", "")
-                chunk_text = f"[Page {page}, {manual}]: Visual match found (score: {score:.2f}). View page image at: {preview_url or image_path}"
+                score = obj.get("maxsim_score") or obj.get("score", 0)
+                # Handle both local path and potential future cloud URL
+                image_ref = obj.get("preview_url") or obj.get("image_path", "")
+                chunk_text = f"[Page {page}, {manual}]: Visual match found (score: {score:.2f}). View page image at: {image_ref}"
             else:
                 continue
             
@@ -313,9 +323,9 @@ Answer:"""
         inputs: Dict[str, Any],
         **kwargs,
     ) -> AsyncGenerator[Any, None]:
-        """Generate streaming response using gpt-oss:120b."""
+        """Generate streaming response using LLM provider."""
         from api.schemas.agent import Response, Status
-        from api.services.llm import get_ollama_client
+        from api.core.providers import get_llm
         
         yield Status("Generating response...")
         
@@ -338,10 +348,13 @@ Answer:"""
         
         # Try streaming LLM generation
         try:
-            client = get_ollama_client()
-            stream_gen = await client.generate(
-                prompt=prompt,
-                stream=True,
+            llm = get_llm()
+            
+            # Use stream_chat with a single user message to support both providers
+            messages = [{"role": "user", "content": prompt}]
+            
+            stream_gen = llm.stream_chat(
+                messages=messages,
                 temperature=0.7,
                 max_tokens=1024,
             )
@@ -371,7 +384,7 @@ class SummarizeTool(Tool):
     """
     Tool that summarizes retrieved data.
     
-    Uses gpt-oss:120b to condense large amounts of retrieved information.
+    Uses configured LLM provider to condense large amounts of retrieved information.
     Only available when the environment contains data.
     """
     
@@ -430,9 +443,9 @@ Summary:"""
         inputs: Dict[str, Any],
         **kwargs,
     ) -> AsyncGenerator[Any, None]:
-        """Summarize retrieved data using gpt-oss:120b."""
+        """Summarize retrieved data using LLM provider."""
         from api.schemas.agent import Response, Status
-        from api.services.llm import get_ollama_client
+        from api.core.providers import get_llm
         
         yield Status("Summarizing retrieved data...")
         
@@ -462,10 +475,13 @@ Summary:"""
         )
         
         try:
-            client = get_ollama_client()
-            stream_gen = await client.generate(
-                prompt=prompt,
-                stream=True,
+            llm = get_llm()
+            
+            # Use stream_chat with single message
+            messages = [{"role": "user", "content": prompt}]
+            
+            stream_gen = llm.stream_chat(
+                messages=messages,
                 temperature=0.5,
                 max_tokens=max_length * 2,  # Rough token estimate
             )
@@ -481,6 +497,5 @@ Summary:"""
             # Fallback
             yield Response(
                 text=f"Retrieved {len(all_objects)} items from technical manuals. "
-                     f"Key sources include pages: {', '.join(str(o.get('page_number', '?')) for o in all_objects[:5])}."
+                f"Key sources include pages: {', '.join(str(o.get('page_number', '?')) for o in all_objects[:5])}."
             )
-

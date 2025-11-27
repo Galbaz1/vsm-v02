@@ -48,17 +48,17 @@ environment[tool_name][result_name] = [{"objects": [...], "metadata": {...}}]
 - **Dockerized Ollama** - Can't access full RAM/GPU (local mode)
 - **Multiple LLMs per mode** - Single LLM for all text tasks
 
-## Cloud Migration (IN PROGRESS)
+## Cloud Migration (Phase 3 Complete ✅)
 > See `TODO.md` and `docs/cloud-migration/` for full plan
 
-**Status:** Phase 3 (Provider Layer) ready to start
+**Status:** Phase 3 Complete | Phase 4 (DSPy) Ready
 
-| Mode | LLM | VLM | Embeddings | Vector DB |
-|------|-----|-----|------------|-----------|
-| Local | gpt-oss:120b (Ollama) | Qwen3-VL-8B (MLX) | bge-m3 | Weaviate Docker |
-| Cloud | Gemini 2.5 Flash | Gemini 2.5 Flash | Jina v4 + **Serverless Worker** | Weaviate Cloud |
+| Mode | LLM | VLM | Text Embeddings | Visual Search |
+|------|-----|-----|-----------------|---------------|
+| Local | gpt-oss:120b (Ollama) | Qwen3-VL-8B (MLX) | bge-m3 | ColQwen2.5-v0.2 |
+| Cloud | Gemini 2.5 Flash | Gemini 2.5 Flash | Jina v4 | Weaviate + Jina CLIP v2 |
 
-**Critical:** Jina API does NOT expose multi-vector for images → Serverless Worker required.
+**Architecture:** Visual search is a separate provider (`get_visual_search()`) that handles embedding + search + ingestion. Cloud uses native Weaviate `multi2vec-jinaai` module with base64 image blobs.
 
 ## DSPy Integration (Phase 4)
 - `api/knowledge/` ✅ Atlas + ThorGuard domain knowledge

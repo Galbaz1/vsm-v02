@@ -10,7 +10,7 @@ DEFAULT_LIMIT = 5
 MAX_LIMIT = 20
 
 @router.get("/search", response_model=SearchResponse)
-def search_manual(
+async def search_manual(
     query: str = Query(..., min_length=3, description="Natural language search query."),
     limit: int = Query(
         DEFAULT_LIMIT,
@@ -27,5 +27,5 @@ def search_manual(
         description="Group results by page and deduplicate by content_hash.",
     ),
 ) -> SearchResponse:
-    hits, page_hits = perform_search(query, limit, chunk_type, group_by_page)
+    hits, page_hits = await perform_search(query, limit, chunk_type, group_by_page)
     return SearchResponse(query=query, hits=hits, page_hits=page_hits)

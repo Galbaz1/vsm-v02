@@ -6,12 +6,13 @@ Refactored from rule-based routing to use Elysia patterns:
 - Tools with availability control
 - Decision tree traversal
 - Self-healing error handling
-- LLM-powered decision making with gpt-oss:120b
+- LLM-powered decision making using DSPy (model-agnostic)
 
 Original Elysia: https://github.com/weaviate/elysia
 """
 
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -33,11 +34,7 @@ from api.services.tools import (
     SummarizeTool,
     VisualInterpretationTool,
 )
-from api.services.llm import (
-    get_ollama_client,
-    DecisionPromptBuilder,
-    DecisionResult,
-)
+from api.prompts import get_vsm_module
 from api.schemas.agent import (
     Result,
     Error,
@@ -45,7 +42,6 @@ from api.schemas.agent import (
     Status,
     Decision,
     Complete,
-    ToolOutput,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,6 +56,7 @@ class AgentOrchestrator:
     - Centralized Environment for state management
     - Self-healing error handling
     - Progressive response streaming
+    - DSPy-based decision making (supports both local/cloud models)
     
     Example:
         agent = get_agent()
@@ -142,7 +139,7 @@ class AgentOrchestrator:
         """
         Decide which tool to use based on query and state.
         
-        Uses gpt-oss:120b for intelligent routing, with rule-based fallback.
+        Uses DSPy module for intelligent routing, with rule-based fallback.
         """
         # Try LLM-based decision first
         try:
@@ -157,44 +154,77 @@ class AgentOrchestrator:
         available_tools: List[Tool],
     ) -> Decision:
         """
-        LLM-powered decision making using gpt-oss:120b.
+        LLM-powered decision making using DSPy.
         
-        Builds a prompt with tool descriptions, environment state, and history,
-        then parses the LLM's JSON response into a Decision object.
+        Uses the "decision" module which auto-injects context via VSMChainOfThought.
         """
-        # Build the decision prompt
-        messages = DecisionPromptBuilder.build_decision_prompt(
-            tree_data=tree_data,
-            available_tools=available_tools,
-        )
+        # Get DSPy module
+        decision_module = get_vsm_module("decision")
         
-        # Call the LLM
-        client = get_ollama_client()
-        response = await client.chat(
-            messages=messages,
-            temperature=0.3,  # Lower temp for more consistent decisions
-            max_tokens=512,
-        )
+        # Serialize tools for the prompt
+        tools_list = []
+        for tool in available_tools:
+            tools_list.append({
+                "name": tool.name,
+                "description": tool.description,
+                "inputs": tool.inputs,
+            })
+        tools_json = json.dumps(tools_list, indent=2)
         
-        # Parse the response
-        decision_result = DecisionResult.from_json(response.text)
+        # Run DSPy prediction (synchronous call, but DSPy handles async internally if configured?)
+        # Note: DSPy 2.5+ supports async but standard modules might be sync.
+        # We wrap in asyncio.to_thread if it blocks, but dspy.LM usually handles this.
+        # However, VSMChainOfThought.forward calls self.predictor() which is sync.
+        # Ideally we should use async DSPy, but for now we'll assume sync is fast enough or run in thread.
+        
+        # For now, run in thread to avoid blocking the event loop
+        def run_decision():
+            return decision_module(
+                tree_data=tree_data,
+                available_tools=tools_json,
+                iteration=f"{tree_data.num_iterations}/{self.max_iterations}",
+            )
+            
+        result = await asyncio.to_thread(run_decision)
+        
+        # Parse outputs
+        tool_name = result.tool_name
+        tool_inputs_str = result.tool_inputs
+        reasoning = getattr(result, "reasoning", "No reasoning provided")
+        
+        # Robust boolean parsing for should_end
+        raw_should_end = getattr(result, "should_end", False)
+        if isinstance(raw_should_end, str):
+            should_end = raw_should_end.lower() in ("true", "yes", "1")
+        else:
+            should_end = bool(raw_should_end)
+        
+        # Parse inputs JSON
+        try:
+            if isinstance(tool_inputs_str, str):
+                tool_inputs = json.loads(tool_inputs_str)
+            else:
+                tool_inputs = tool_inputs_str  # Already a dict?
+        except json.JSONDecodeError:
+            logger.warning(f"Failed to parse tool inputs JSON: {tool_inputs_str}")
+            tool_inputs = {}
         
         # Validate tool exists
         tool_names = {t.name for t in available_tools}
-        if decision_result.tool_name not in tool_names:
+        if tool_name not in tool_names:
             logger.warning(
-                f"LLM chose unavailable tool: {decision_result.tool_name}. "
+                f"LLM chose unavailable tool: {tool_name}. "
                 f"Available: {tool_names}"
             )
             # Fall back to text_response if tool doesn't exist
-            decision_result.tool_name = "text_response"
-            decision_result.should_end = True
+            tool_name = "text_response"
+            should_end = True
         
         return Decision(
-            tool_name=decision_result.tool_name,
-            inputs=decision_result.inputs,
-            reasoning=decision_result.reasoning,
-            should_end=decision_result.should_end,
+            tool_name=tool_name,
+            inputs=tool_inputs,
+            reasoning=reasoning,
+            should_end=should_end,
         )
     
     async def _make_rule_decision(

@@ -19,7 +19,7 @@ class FastVectorSearchTool(Tool):
     """
     Fast vector search over AssetManual collection.
     
-    Uses Ollama nomic-embed-text embeddings for ~0.5s query time.
+    Uses configured Embedding and VectorDB providers.
     Best for: factual queries, text content, quick lookups.
     """
     
@@ -74,7 +74,8 @@ class FastVectorSearchTool(Tool):
         
         try:
             # Search ALL chunk types (text, table, figure, title)
-            hits, page_hits = perform_search(
+            # perform_search is now async and uses providers
+            hits, page_hits = await perform_search(
                 query=query,
                 limit=limit,
                 chunk_type=None,  # Always search all types
@@ -124,15 +125,15 @@ class FastVectorSearchTool(Tool):
             yield Error(
                 message=f"Search failed: {str(e)}",
                 recoverable=False,
-                error_type="weaviate_error",
+                error_type="search_error",
             )
 
 
 class ColQwenSearchTool(Tool):
     """
-    ColQwen visual search over PDFDocuments collection.
+    Visual search over PDFDocuments collection.
     
-    Uses ColQwen2.5 multi-vector embeddings with late-interaction (MaxSim).
+    Uses VisualSearchProvider (ColQwen local, Jina CLIP cloud).
     Best for: diagrams, charts, wiring schematics, visual content.
     """
     
@@ -140,10 +141,9 @@ class ColQwenSearchTool(Tool):
         super().__init__(
             name="colqwen_search",
             description=(
-                "Search using ColQwen multimodal embeddings for visual content. "
-                "Best for queries about diagrams, charts, wiring schematics, figures, or visual layouts. "
-                "Returns full page images with MaxSim similarity scores. "
-                "Average query time: 3-5 seconds (slower but more accurate for visual queries)."
+                "Search for visual content (diagrams, charts, schematics, figures). "
+                "Returns relevant page images with similarity scores. "
+                "Use for queries like 'show me', 'diagram of', 'figure showing'. "
             ),
             status="Searching visual content...",
             inputs={
@@ -166,7 +166,7 @@ class ColQwenSearchTool(Tool):
         tree_data: "TreeData",
         **kwargs,
     ) -> bool:
-        """Check if ColQwen search is available."""
+        """Check if visual search is available."""
         return "PDFDocuments" in tree_data.collection_names
     
     async def run_if_true(
@@ -199,8 +199,8 @@ class ColQwenSearchTool(Tool):
         inputs: Dict[str, Any],
         **kwargs,
     ) -> AsyncGenerator[Any, None]:
-        """Execute ColQwen visual search."""
-        from api.services.colqwen import get_colqwen_retriever
+        """Execute visual search."""
+        from api.core.providers import get_visual_search
         from api.core.config import get_settings
         
         query = inputs.get("query", tree_data.user_prompt)
@@ -211,8 +211,8 @@ class ColQwenSearchTool(Tool):
         start_time = time.time()
         
         try:
-            retriever = get_colqwen_retriever()
-            results = retriever.retrieve(query=query, top_k=top_k)
+            visual_search = get_visual_search()
+            results = await visual_search.search(query=query, top_k=top_k)
             
             elapsed_ms = int((time.time() - start_time) * 1000)
             
@@ -228,19 +228,25 @@ class ColQwenSearchTool(Tool):
             settings = get_settings()
             objects = []
             for result in results:
-                # Build preview URL from image_path
-                image_path = result.get("image_path", "")
-                if image_path:
-                    # image_path is like "static/previews/techman/page-1.png"
-                    preview_url = f"{settings.api_base_url}/{image_path}"
-                else:
-                    preview_url = None
+                # In local mode, result.image_path is a relative path (e.g. "static/previews/...")
+                # In cloud mode, images are blobs, so no URL unless we serve them via an endpoint
+                # For now, we'll assume local paths work, or cloud needs a dedicated image retrieval endpoint
+                
+                # TODO: Cloud mode image serving
+                preview_url = None
+                if result.image_path:
+                    preview_url = f"{settings.api_base_url}/{result.image_path}"
+                elif result.image_base64:
+                    # For cloud, we might return data URI or reference a blob endpoint
+                    # This is a placeholder for now
+                    preview_url = None 
                 
                 objects.append({
-                    "page_number": result.get("page_number"),
-                    "asset_manual": result.get("asset_manual"),
-                    "maxsim_score": result.get("maxsim_score"),
-                    "image_path": image_path,
+                    "page_id": result.page_id,  # Needed for cloud image retrieval
+                    "page_number": result.page_number,
+                    "asset_manual": result.asset_manual,
+                    "score": result.score,
+                    "image_path": result.image_path,
                     "preview_url": preview_url,
                 })
             
@@ -251,22 +257,22 @@ class ColQwenSearchTool(Tool):
                     "count": len(objects),
                     "time_ms": elapsed_ms,
                     "collection": "PDFDocuments",
-                    "retrieval_type": "colqwen_maxsim",
+                    "retrieval_type": "visual_search",
                 },
                 name="PDFDocuments",
                 llm_message=(
                     f"Found {len(objects)} relevant pages with visual content. "
                     f"Top result: page {objects[0]['page_number']} "
-                    f"(score: {objects[0]['maxsim_score']:.3f})"
+                    f"(score: {objects[0]['score']:.3f})"
                 ),
             )
             
         except Exception as e:
             yield Error(
-                message=f"ColQwen search failed: {str(e)}",
+                message=f"Visual search failed: {str(e)}",
                 recoverable=False,
-                error_type="colqwen_error",
-                suggestion="ColQwen may not be initialized. Try again or use fast_vector_search.",
+                error_type="visual_search_error",
+                suggestion="Visual search service may not be available.",
             )
 
 
@@ -395,4 +401,3 @@ class HybridSearchTool(Tool):
                 f"and {len(visual_results)} relevant pages in {elapsed_ms}ms (parallel)."
             ),
         )
-

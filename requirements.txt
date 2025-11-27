@@ -29,3 +29,9 @@ requests
 # Dual-Model Analysis Sub-Agent
 openai>=1.50.0  # GPT-5.1 Responses API (high reasoning)
 google-genai>=1.50.0  # Gemini 3 Pro (1M context window)
+
+# DSPy for prompt optimization
+dspy-ai
+
+# Experiment tracking (optional)
+mlflow

@@ -1,27 +1,28 @@
 # Cloud Migration Architecture Documentation
 
-**Last Updated:** 2025-11-26  
-**Status:** Architecture Freeze  
+**Last Updated:** 2025-11-27  
+**Status:** Architecture Simplified  
 **Target Version:** VSM v0.3
 
 ---
 
 ## Overview
 
-This folder contains the detailed architectural blueprints for migrating VSM from a purely local (Mac Studio) deployment to a hybrid mode that supports cloud deployment on lightweight machines (MacBook Air M1).
+This folder contains the architectural blueprints for migrating VSM from a purely local (Mac Studio) deployment to a hybrid mode that supports cloud deployment on lightweight machines (MacBook Air M1).
 
-**Critical Innovation:**  
-To preserve the high-precision **visual late-interaction search** (ColQwen style) in the cloud without a local GPU, this architecture introduces a **Serverless Custom Provider**. This "Hacker" solution runs the Jina v4 model on serverless GPUs (RunPod/Modal) to expose the specific multi-vector outputs not available in the standard public API.
+**Key Simplification (2025-11-27):**  
+Originally planned a serverless worker for visual search. **No longer needed!**  
+Weaviate Cloud has native Jina CLIP integration (`multi2vec-jinaai`). Images stored as base64 blobs, Weaviate auto-embeds via Jina API.
 
 ## Documentation Index
 
 | # | Document | Description |
 |---|----------|-------------|
 | **01** | [Architecture Overview](./01-architecture-overview.md) | High-level system design, layer hierarchy, and data flows (Local vs Cloud). |
-| **02** | [Provider Layer](./02-provider-layer.md) | Detailed design of the `api/core/providers` abstraction, including the new Serverless Worker interface. |
+| **02** | [Provider Layer](./02-provider-layer.md) | Detailed design of the `api/core/providers` abstraction. |
 | **03** | [DSPy Prompt Optimization](./03-dspy-prompt-optimization.md) | Strategy for compiling optimized prompts for different models (Gemini vs OSS). |
 | **04** | [Tool Routing](./04-tool-routing.md) | How the AgentOrchestrator selects tools and how tools adapt to the active mode. |
-| **05** | [Search Pipelines](./05-search-pipelines.md) | Deep dive into Text and Visual RAG pipelines, including the serverless visual search flow. |
+| **05** | [Search Pipelines](./05-search-pipelines.md) | Deep dive into Text and Visual RAG pipelines. |
 | **06** | [Configuration Guide](./06-configuration-guide.md) | Setup instructions, environment variables, and deployment steps. |
 
 ## Quick Start (Cloud Mode)
@@ -30,8 +31,9 @@ To preserve the high-precision **visual late-interaction search** (ColQwen style
 # 1. Configure environment
 export VSM_MODE=cloud
 export GEMINI_API_KEY=...
-export WEAVIATE_CLOUD_URL=...
-export JINA_WORKER_URL=https://api.myserverless.com/v1/embed  # The "Hacker" Endpoint
+export JINA_API_KEY=...
+export WEAVIATE_URL=https://xxx.weaviate.cloud
+export WEAVIATE_API_KEY=...
 
 # 2. Run ingestion (one-time)
 python scripts/cloud_ingest.py data/output_techman.json static/previews/techman "TechMan"
@@ -46,21 +48,48 @@ python -m api.main
 flowchart LR
     subgraph Local["Local Mode (Mac Studio)"]
         L_LLM[gpt-oss:120b]
-        L_VLM[Qwen3-VL]
+        L_VLM[Qwen3-VL-8B]
+        L_Visual[ColQwen2.5]
         L_VDB[Weaviate Docker]
     end
 
     subgraph Cloud["Cloud Mode (MacBook Air)"]
         C_LLM[Gemini 2.5 Flash]
-        
-        subgraph "Serverless Worker"
-            Worker[Jina v4 Custom<br/>Multi-Vector]
-        end
-        
+        C_VLM[Gemini Vision]
+        C_Visual[Jina CLIP v2]
         C_VDB[Weaviate Cloud]
     end
 
     L_LLM ~~~ C_LLM
-    L_VLM ~~~ Worker
+    L_VLM ~~~ C_VLM
+    L_Visual ~~~ C_Visual
     L_VDB ~~~ C_VDB
 ```
+
+## Cloud Visual Search (Simplified)
+
+**Old approach:** Serverless worker running Jina v4 for multi-vector embeddings  
+**New approach:** Native Weaviate + Jina CLIP integration
+
+```mermaid
+flowchart LR
+    subgraph Ingestion
+        PNG[Page PNG] --> B64[Base64 Encode]
+        B64 --> WC[Weaviate Cloud]
+        WC --> JinaAPI[Jina CLIP API]
+        JinaAPI --> Embed[Auto-Embed]
+    end
+    
+    subgraph Search
+        Query[Text Query] --> WC2[Weaviate Cloud]
+        WC2 --> JinaAPI2[Jina CLIP API]
+        JinaAPI2 --> NearText[near_text Search]
+        NearText --> Results[Page Results + Blobs]
+    end
+```
+
+**Benefits:**
+- No custom infrastructure to maintain
+- Images stored in Weaviate (no external storage)
+- Weaviate handles embedding automatically
+- Single-vector (CLIP) vs multi-vector (ColQwen) - slightly less precise but much simpler

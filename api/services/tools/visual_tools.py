@@ -1,9 +1,10 @@
 """
-Visual interpretation tools using MLX VLM.
+Visual interpretation tools using VLM (Local/Cloud).
 
-Provides visual understanding of page images retrieved by ColQwen search.
+Provides visual understanding of page images retrieved by visual search.
 """
 
+import base64
 import logging
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, Tuple, TYPE_CHECKING
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 class VisualInterpretationTool(Tool):
     """
-    Tool that interprets visual content using Qwen3-VL-8B via MLX.
+    Tool that interprets visual content using a VLM (Qwen3-VL-8B local, Gemini cloud).
     
     Only available when ColQwen search results exist in the environment.
     Takes page images and generates descriptions of diagrams, charts, etc.
@@ -110,9 +111,10 @@ class VisualInterpretationTool(Tool):
         """
         Interpret visual content from ColQwen search results.
         
-        Gets page images from environment and sends them to MLX VLM.
+        Gets page images from environment and sends them to VLM.
         """
-        from api.services.llm import get_mlx_vlm_client
+        from api.core.providers import get_vlm, get_visual_search
+        from api.core.config import get_settings
         
         prompt = inputs.get(
             "prompt",
@@ -121,13 +123,13 @@ class VisualInterpretationTool(Tool):
         page_indices = inputs.get("page_indices")
         max_pages = inputs.get("max_pages", 2)
         
-        yield Status("Gathering page images from ColQwen results...")
+        yield Status("Gathering page images from visual search results...")
         
         # Get ColQwen results from environment
         colqwen_data = tree_data.environment.find("colqwen_search")
         if not colqwen_data:
             yield Error(
-                message="No ColQwen search results found in environment",
+                message="No visual search results found in environment",
                 recoverable=True,
                 suggestion="Run colqwen_search first to retrieve visual content",
             )
@@ -138,20 +140,18 @@ class VisualInterpretationTool(Tool):
         for name, entries in colqwen_data.items():
             for entry in entries:
                 for obj in entry.get("objects", []):
-                    image_path = obj.get("image_path")
-                    if image_path:
-                        pages_to_analyze.append({
-                            "page_number": obj.get("page_number"),
-                            "asset_manual": obj.get("asset_manual"),
-                            "image_path": image_path,
-                            "score": obj.get("maxsim_score", 0),
-                        })
+                    pages_to_analyze.append({
+                        "page_id": obj.get("page_id"),
+                        "page_number": obj.get("page_number"),
+                        "asset_manual": obj.get("asset_manual"),
+                        "image_path": obj.get("image_path"),
+                        "score": obj.get("maxsim_score") or obj.get("score", 0),
+                    })
         
         if not pages_to_analyze:
             yield Error(
-                message="No page images found in ColQwen results",
+                message="No pages found in visual search results",
                 recoverable=True,
-                suggestion="ColQwen results may not include image paths",
             )
             return
         
@@ -167,38 +167,57 @@ class VisualInterpretationTool(Tool):
         
         yield Status(f"Analyzing {len(pages_to_analyze)} page(s) with VLM...")
         
-        # Get VLM client
-        vlm_client = get_mlx_vlm_client()
+        # Get VLM provider
+        vlm = get_vlm()
+        visual_search = get_visual_search()
+        settings = get_settings()
         
         # Check if VLM is available
-        is_available = await vlm_client.is_available()
-        if not is_available:
+        if not await vlm.is_available():
             yield Error(
-                message="MLX VLM server is not available",
+                message="VLM service is not available",
                 recoverable=True,
-                suggestion="Start the VLM server with: mlx_vlm.server --model mlx-community/Qwen3-VL-8B-Instruct-4bit --port 8000",
+                suggestion="Ensure local MLX server is running or cloud API keys are set",
             )
             return
         
         # Process each page
         interpretations = []
         for page_info in pages_to_analyze:
-            image_path = page_info["image_path"]
             page_num = page_info["page_number"]
             manual = page_info.get("asset_manual", "Unknown")
+            page_id = page_info.get("page_id")
             
-            # Resolve the full path
-            full_path = Path(image_path)
-            if not full_path.is_absolute():
-                # Assume relative to project root
-                full_path = Path("/Users/lab/Documents/vsm-v02") / image_path
+            image_data = None  # Will be path or base64 string
             
-            if not full_path.exists():
-                logger.warning(f"Image not found: {full_path}")
+            # 1. Try local file path first (Local Mode)
+            if page_info.get("image_path"):
+                # Resolve relative path
+                full_path = Path(page_info["image_path"])
+                if not full_path.is_absolute():
+                    # Assume relative to project root
+                    project_root = Path(__file__).parent.parent.parent.parent
+                    full_path = project_root / page_info["image_path"]
+                
+                if full_path.exists():
+                    image_data = str(full_path)
+            
+            # 2. Try fetching from provider (Cloud Mode)
+            if not image_data and page_id is not None:
+                try:
+                    image_bytes = await visual_search.get_page_image(page_id)
+                    if image_bytes:
+                        # Convert to base64 for VLM
+                        image_data = base64.b64encode(image_bytes).decode("utf-8")
+                except Exception as e:
+                    logger.error(f"Failed to fetch image for page {page_num}: {e}")
+            
+            if not image_data:
+                logger.warning(f"Could not load image for page {page_num}")
                 interpretations.append({
                     "page_number": page_num,
                     "asset_manual": manual,
-                    "error": f"Image not found: {image_path}",
+                    "error": "Image content unavailable",
                 })
                 continue
             
@@ -211,8 +230,8 @@ class VisualInterpretationTool(Tool):
                     f"{prompt}"
                 )
                 
-                interpretation = await vlm_client.interpret_image(
-                    image_path=str(full_path),
+                interpretation = await vlm.interpret_image(
+                    image_path=image_data,
                     prompt=full_prompt,
                     max_tokens=512,
                 )
@@ -220,7 +239,6 @@ class VisualInterpretationTool(Tool):
                 interpretations.append({
                     "page_number": page_num,
                     "asset_manual": manual,
-                    "image_path": image_path,
                     "interpretation": interpretation,
                     "score": page_info.get("score"),
                 })
@@ -315,14 +333,13 @@ class DiagramExtractionTool(Tool):
         **kwargs,
     ) -> AsyncGenerator[Any, None]:
         """Extract structured information from diagrams."""
-        from api.services.llm import get_mlx_vlm_client
+        from api.core.providers import get_vlm, get_visual_search
         
         diagram_type = inputs.get("diagram_type", "auto")
-        extract_connections = inputs.get("extract_connections", True)
         
         yield Status("Analyzing diagram structure...")
         
-        # Get visual interpretation results
+        # Get visual interpretation results to know what we have
         visual_data = tree_data.environment.find("visual_interpretation")
         if not visual_data:
             yield Error(
@@ -336,7 +353,7 @@ class DiagramExtractionTool(Tool):
         colqwen_data = tree_data.environment.find("colqwen_search")
         if not colqwen_data:
             yield Error(
-                message="No ColQwen results to extract diagrams from",
+                message="No search results to extract diagrams from",
                 recoverable=True,
             )
             return
@@ -369,11 +386,12 @@ class DiagramExtractionTool(Tool):
                 "Format as structured data."
             )
         
-        vlm_client = get_mlx_vlm_client()
+        vlm = get_vlm()
+        visual_search = get_visual_search()
         
-        if not await vlm_client.is_available():
+        if not await vlm.is_available():
             yield Error(
-                message="MLX VLM server is not available",
+                message="VLM service is not available",
                 recoverable=True,
             )
             return
@@ -383,23 +401,39 @@ class DiagramExtractionTool(Tool):
         for name, entries in colqwen_data.items():
             for entry in entries:
                 for obj in entry.get("objects", [])[:1]:  # Just first page
-                    image_path = obj.get("image_path")
-                    if not image_path:
-                        continue
+                    page_id = obj.get("page_id")
+                    page_num = obj.get("page_number")
+                    image_data = None
                     
-                    full_path = Path("/Users/lab/Documents/vsm-v02") / image_path
-                    if not full_path.exists():
+                    # Local
+                    if obj.get("image_path"):
+                        full_path = Path(obj["image_path"])
+                        if not full_path.is_absolute():
+                            full_path = Path(__file__).parent.parent.parent.parent / obj["image_path"]
+                        if full_path.exists():
+                            image_data = str(full_path)
+                    
+                    # Cloud
+                    if not image_data and page_id is not None:
+                        try:
+                            image_bytes = await visual_search.get_page_image(page_id)
+                            if image_bytes:
+                                image_data = base64.b64encode(image_bytes).decode("utf-8")
+                        except Exception as e:
+                            logger.error(f"Failed to get image: {e}")
+                    
+                    if not image_data:
                         continue
                     
                     try:
-                        extraction = await vlm_client.interpret_image(
-                            image_path=str(full_path),
+                        extraction = await vlm.interpret_image(
+                            image_path=image_data,
                             prompt=prompt,
                             max_tokens=1024,
                         )
                         
                         extractions.append({
-                            "page_number": obj.get("page_number"),
+                            "page_number": page_num,
                             "diagram_type": diagram_type,
                             "extraction": extraction,
                         })
@@ -423,4 +457,3 @@ class DiagramExtractionTool(Tool):
             name="diagram_extractions",
             llm_message=f"Extracted structured information from {len(extractions)} diagram(s).",
         )
-

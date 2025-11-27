@@ -9,30 +9,31 @@ alwaysApply: true
 
 | Date | Issue | Fix | File |
 |------|-------|-----|------|
-| 2025-11-26 | Hybrid search was sequential (slow) | Made parallel with asyncio.gather() | `api/services/tools/search_tools.py` |
-| 2025-11-26 | LLM rarely chose hybrid_search | Updated prompt to prefer hybrid for tables/complex queries | `api/services/llm.py` |
-| 2024-11-26 | Table content stripped during ingestion | Fixed regex order in clean_content() | `scripts/weaviate_ingest_manual.py` |
-| 2024-11-26 | Vector search missed tables | Changed to hybrid search (vector + BM25) | `api/services/search.py` |
-| 2024-11-26 | LLM filtered by chunk_type="text" | Removed chunk_type param from tool | `api/services/tools/search_tools.py` |
+| 2025-11-27 | Agent Refactor | Replaced logic with DSPy `decision` module | `api/services/agent.py` |
+| 2025-11-27 | Tools Refactor | Converted all tools to use `api/core/providers/` | `api/services/tools/` |
+| 2025-11-27 | DSPy signatures missing | Created Decision, Search, Response signatures | `api/prompts/signatures/` |
+| 2025-11-27 | DSPy config missing | Added configure_dspy() with Gemini thinking control | `api/core/dspy_config.py` |
+| 2025-11-27 | Provider layer missing | Created full provider abstraction with factories | `api/core/providers/` |
 
 ## Known Issues
 
 | Issue | Location | Impact |
 |-------|----------|--------|
-| Hardcoded paths | `visual_tools.py:194,390` | Breaks on non-lab machines |
-| Empty config.py | `api/core/config.py` | Missing VSM_MODE, provider settings |
+| Weaviate protobuf issue | `weaviate` package | Lazy imports as workaround |
 
 ## Active Migration
 
-**Cloud Migration in Progress** - See `TODO.md` and `docs/cloud-migration/`
-- Phase 3: Provider Layer (next)
-- Goal: `VSM_MODE=local|cloud` toggle
+**Cloud Migration Phase 7 Complete!** - See `TODO.md` and `docs/cloud-migration/`
+- ✅ Phase 5: Cloud Implementation (done)
+- ✅ Phase 6: Tool & Agent Refactor (done)
+- ✅ Phase 7: Cloud Ingestion (complete - 260 text chunks, 260 visual pages)
+- ✅ Goal achieved: `VSM_MODE=local|cloud` toggle working
 
 ## Last Benchmark
 
 ```
-Date: 2024-11-26
-Status: Pending re-run after fixes
+Date: 2025-11-27
+Status: Cloud mode tested - text search, visual search, LLM streaming, agent flow all working
 ```
 
 ---

@@ -18,7 +18,7 @@ The current date is 2025-11-26. --always ensure you use this date when writing c
 | LLM | `gpt-oss:120b` (Ollama) | Gemini 2.5 Flash |
 | VLM | `Qwen3-VL-8B` (MLX) | Gemini 2.5 Flash |
 | Embeddings | `bge-m3` (Ollama) | Jina v4 |
-| Visual Retrieval | ColQwen2.5-v0.2 | **Serverless Worker** (Jina v4) |
+| Visual Search | ColQwen2.5-v0.2 | Weaviate Cloud + Jina CLIP v2 |
 
 ## Architecture
 ```
@@ -87,10 +87,11 @@ ollama pull bge-m3          # Pull embeddings
 1. **Clean Arch**: Logic in `services/`, thin `endpoints/`, models in `schemas/`.
 2. **Streaming**: API responses must be NDJSON/SSE (don't break this).
 3. Run scripts from project root
-4. **Provider Pattern**: Use `get_llm()`, `get_vlm()`, `get_embeddings()`, `get_vectordb()` - never direct clients
+4. **Provider Pattern**: Use `get_llm()`, `get_vlm()`, `get_embeddings()`, `get_vectordb()`, `get_visual_search()` - never direct clients
 5. Weaviate ingestion (local): `api_endpoint="http://host.docker.internal:11434"`
 6. Tools yield `Result` with `llm_message` for decision agent context
 7. **Mode-agnostic tools**: Tools call providers, providers handle local/cloud
+8. **Visual Search**: Use `get_visual_search()` for all visual RAG - handles embedding + search + ingestion
 
 ## ⚠️ Debugging Agent Issues
 

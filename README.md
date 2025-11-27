@@ -1,86 +1,111 @@
 # VSM - Visual Search Manual
 
-A **local-first agentic RAG system** for searching technical asset manuals with visual grounding. Runs entirely on Apple Silicon (M3 256GB Mac Studio).
+A **hybrid agentic RAG system** for searching technical asset manuals with visual grounding. Supports both local (Mac Studio) and cloud (MacBook Air) deployment modes.
 
 ## Features
 
-- 🔍 **Dual RAG Pipelines**: Fast text search (bge-m3) + Visual search (ColQwen2.5)
-- 🤖 **Agentic LLM**: gpt-oss:120b makes tool selection decisions
+- 🔍 **Dual RAG Pipelines**: Text search + Visual search (separate pipelines)
+- 🤖 **Agentic LLM**: DSPy-powered tool selection (model-agnostic)
 - 📄 **Visual Grounding**: Bounding boxes overlay on page images
 - ⚡ **Streaming Responses**: Real-time NDJSON output
-- 🏠 **100% Local**: No cloud dependencies, all inference on-device
+- 🔄 **Mode-Switchable**: `VSM_MODE=local|cloud` via Provider abstraction
+
+## Deployment Modes
+
+| Component | Local (Mac Studio) | Cloud (MacBook Air) |
+|-----------|-------------------|---------------------|
+| **LLM** | gpt-oss:120b (Ollama) | Gemini 2.5 Flash |
+| **VLM** | Qwen3-VL-8B (MLX) | Gemini 2.5 Flash |
+| **Embeddings** | bge-m3 (Ollama) | Jina v4 |
+| **Visual Search** | ColQwen2.5-v0.2 | Weaviate + Jina CLIP v2 |
+| **Vector DB** | Weaviate (Docker) | Weaviate Cloud |
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Mac Studio (Host)                        │
-│                                                             │
+│                    Mac Studio (Local Mode)                  │
 │  ┌─────────────────┐    ┌─────────────────────────────────┐│
-│  │  Native Ollama  │    │         Application             ││
-│  │  (0.0.0.0:11434)│    │  - API (FastAPI, port 8001)     ││
-│  │                 │    │  - Frontend (Next.js, port 3000)││
-│  │  Models:        │    └─────────────────────────────────┘│
+│  │  Native Ollama  │    │  API (8001) / Frontend (3000)   ││
+│  │  (0.0.0.0:11434)│    └─────────────────────────────────┘│
 │  │  - gpt-oss:120b │                                       │
 │  │  - bge-m3       │    host.docker.internal:11434         │
 │  └────────┬────────┘              ▼                        │
 │           │           ┌─────────────────┐                  │
 │           └──────────▶│ Weaviate (8080) │ Docker           │
-│                       │ 1,614 documents │                  │
 │                       └─────────────────┘                  │
 └─────────────────────────────────────────────────────────────┘
-```
 
-**Key Design Decision**: Ollama runs **natively** on macOS (not in Docker) to access full 256GB RAM and Metal GPU acceleration. Weaviate runs in Docker and connects to Native Ollama via `host.docker.internal`.
+┌─────────────────────────────────────────────────────────────┐
+│                  MacBook Air (Cloud Mode)                   │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │  API (8001) / Frontend (3000)                           ││
+│  └────────┬────────────────────────────────────────────────┘│
+│           │                                                 │
+│           ▼                                                 │
+│  ┌─────────────┐  ┌─────────────┐  ┌───────────────────┐   │
+│  │ Gemini API  │  │  Jina API   │  │  Weaviate Cloud   │   │
+│  │ (LLM + VLM) │  │ (Embeddings)│  │ (+ Jina CLIP v2)  │   │
+│  └─────────────┘  └─────────────┘  └───────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ## Quick Start
 
 ### Prerequisites
 
 - macOS with Apple Silicon (M1/M2/M3)
-- [Ollama](https://ollama.ai) installed natively
-- Docker Desktop
-- Node.js 18+
 - Conda (with `vsm-hva` environment)
+- **Local Mode**: [Ollama](https://ollama.ai), Docker Desktop
+- **Cloud Mode**: API keys for Gemini, Jina, Weaviate Cloud
 
-### 1. Pull Required Models
-
-```bash
-# LLM for decision-making and text generation (~65GB)
-ollama pull gpt-oss:120b
-
-# Embeddings for text search (~1.2GB)
-ollama pull bge-m3
-```
-
-### 2. Start All Services
+### Option A: Local Mode (Mac Studio)
 
 ```bash
-conda activate vsm-hva
 ./scripts/start.sh
 ```
 
-This will:
-1. Kill any conflicting Ollama/Weaviate containers from other projects
-2. Start Native Ollama with optimized settings
-3. Start Weaviate (Docker) connected to Native Ollama
-4. Start the FastAPI backend
-5. Start the Next.js frontend
-
-### 3. Open the App
-
-- **Frontend**: http://localhost:3000
-- **API Docs**: http://localhost:8001/docs
-
-### 4. Stop All Services
+### Option B: Cloud Mode (MacBook Air)
 
 ```bash
-./scripts/stop.sh
+./scripts/start_cloud.sh
+```
+
+> **Note:** Cloud mode requires `.env` with `GEMINI_API_KEY`, `JINA_API_KEY`, `WEAVIATE_URL`, `WEAVIATE_API_KEY`
+
+## Environment Variables
+
+### Mode Selection
+
+```bash
+VSM_MODE=local   # Default: use Ollama + MLX + ColQwen
+VSM_MODE=cloud   # Use Gemini + Jina + Weaviate Cloud
+```
+
+### Local Mode
+
+```bash
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=gpt-oss:120b
+OLLAMA_EMBED_MODEL=bge-m3
+MLX_VLM_BASE_URL=http://localhost:8000
+WEAVIATE_LOCAL_URL=http://localhost:8080
+```
+
+### Cloud Mode
+
+```bash
+GEMINI_API_KEY=AIza...
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_THINKING_BUDGET=-1  # -1=dynamic, 0=off, 1-24576=tokens
+JINA_API_KEY=jina_...
+WEAVIATE_URL=https://xxx.weaviate.cloud
+WEAVIATE_API_KEY=xxx
 ```
 
 ## Ingesting Documents
 
-### Text-based RAG (Fast Search)
+### Local Mode
 
 ```bash
 # Parse PDF with LandingAI ADE
@@ -89,22 +114,27 @@ python scripts/parse_with_landingai.py data/manual.pdf data/output.json
 # Generate page previews
 python scripts/generate_previews.py data/manual.pdf static/previews/manual
 
-# Ingest into Weaviate
+# Ingest text into Weaviate
 python scripts/weaviate_ingest_manual.py data/output.json "Manual Name"
+
+# Ingest visuals (ColQwen)
+python scripts/colqwen_ingest.py "Manual Name"
 ```
 
-### Visual RAG (ColQwen - Optional)
+### Cloud Mode
 
 ```bash
-# Requires preview PNGs from above
-python scripts/colqwen_ingest.py "Manual Name"
+# Ingest both text and visuals to Weaviate Cloud
+export VSM_MODE=cloud
+python scripts/cloud_ingest.py --text data/output.json "Manual Name"
+python scripts/cloud_ingest.py --visual data/manual.pdf "Manual Name"
 ```
 
 ## API Endpoints
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /search?query=...` | Fast vector search |
+| `GET /search?query=...` | Fast hybrid search |
 | `GET /agentic_search?query=...` | Agentic streaming search (SSE) |
 | `GET /healthz` | Health check |
 
@@ -112,20 +142,27 @@ python scripts/colqwen_ingest.py "Manual Name"
 
 ```
 vsm-v02/
-├── api/                    # FastAPI backend
-│   ├── services/agent.py   # Decision tree orchestrator
-│   ├── services/llm.py     # Ollama/MLX clients
-│   └── services/tools/     # Tool implementations
-├── frontend/               # Next.js 16 + React 19
+├── api/
+│   ├── core/
+│   │   ├── config.py           # Settings + VSM_MODE
+│   │   ├── providers/          # LLM/VLM/Embed/VectorDB abstractions
+│   │   └── dspy_config.py      # DSPy LM configuration
+│   ├── prompts/                # DSPy signatures
+│   ├── services/
+│   │   ├── agent.py            # Decision tree orchestrator
+│   │   └── tools/              # Tool implementations
+│   └── endpoints/              # FastAPI routes
+├── frontend/                   # Next.js 16 + React 19
 ├── scripts/
-│   ├── start.sh            # Start all services
-│   ├── stop.sh             # Stop all services
+│   ├── start.sh                # Start local services
+│   ├── stop.sh                 # Stop services
+│   ├── cloud_ingest.py         # Cloud ingestion
 │   └── weaviate_ingest_manual.py
-├── docker-compose.yml      # Weaviate only (no Ollama!)
-└── static/previews/        # Page PNG images
+├── docs/cloud-migration/       # Architecture docs
+└── static/previews/            # Page PNG images
 ```
 
-## Models & Memory
+## Models & Memory (Local Mode)
 
 | Model | Size | Purpose |
 |-------|------|---------|
@@ -138,36 +175,28 @@ vsm-v02/
 
 ## Troubleshooting
 
-### "404 Not Found" for Ollama API
+### "404 Not Found" for Ollama API (Local)
 
 **Cause**: Wrong Ollama instance running (Docker instead of Native).
 
 **Fix**: Run `./scripts/start.sh` - it automatically kills conflicting containers.
 
-### "lookup ollama on 127.0.0.11:53: no such host"
+### Search returns 0 results (Cloud)
 
-**Cause**: Weaviate container from another project with wrong config.
+**Cause**: Data not ingested to cloud Weaviate.
 
-**Fix**: 
-```bash
-docker stop $(docker ps -q --filter name=weaviate)
-docker rm $(docker ps -aq --filter name=weaviate)
-./scripts/start.sh
-```
+**Fix**: Run `python scripts/cloud_ingest.py ...` to ingest data.
 
-### Embedding failures during ingestion
+### "GEMINI_API_KEY not set" (Cloud)
 
-**Cause**: Model swapping instability in Ollama.
+**Cause**: Missing environment variables.
 
-**Fix**: Pre-warm the embedding model:
-```bash
-curl -s http://localhost:11434/api/embed -d '{"model":"bge-m3","input":"warmup","keep_alive":"15m"}'
-```
+**Fix**: Ensure all cloud API keys are exported before starting.
 
 ## Logs
 
 ```bash
-tail -f /tmp/vsm-ollama.log    # Ollama
+tail -f /tmp/vsm-ollama.log    # Ollama (local)
 tail -f /tmp/vsm-api.log       # Backend API
 tail -f /tmp/vsm-frontend.log  # Frontend
 ```
@@ -176,36 +205,28 @@ tail -f /tmp/vsm-frontend.log  # Frontend
 
 Query traces are auto-saved to `logs/query_traces/` for every `/agentic_search` call.
 
-### When a Query Fails
-
 ```bash
 # 1. Find the trace
 ls -la logs/query_traces/
 
 # 2. Run intelligent analysis (uses Gemini 3 Pro's 1M context)
 python scripts/analyze_with_llm.py --gemini-only <trace_id_prefix>
-
-# 3. Apply the suggested fix, then verify
-python scripts/run_benchmark.py --output results.json
 ```
-
-The analyzer loads the entire codebase + all traces into Gemini 3 Pro and returns a concise diagnosis with exact file:line to fix.
-
-See [.cursor/README.md](.cursor/README.md) for the full debugging toolkit documentation.
 
 ## Documentation
 
-- [Development Workflow](docs/WORKFLOW.md) - How to debug and develop
-- [System Architecture](docs/ARCHITECTURE.md)
+- [Cloud Migration Architecture](docs/cloud-migration/README.md)
+- [Provider Layer Design](docs/cloud-migration/02-provider-layer.md)
+- [Configuration Guide](docs/cloud-migration/06-configuration-guide.md)
 - [Agent Flow Diagram](docs/agent_diagram.md)
 - [RAG Pipeline Explained](docs/RAG_PIPELINE_EXPLAINED.md)
-- [ColQwen Ingestion](docs/COLQWEN_INGESTION_EXPLAINED.md)
 
 ## Tech Stack
 
-- **LLM**: gpt-oss:120b (Native Ollama)
-- **Embeddings**: bge-m3 (Native Ollama)
-- **Vector DB**: Weaviate 1.34 (Docker)
-- **Backend**: Python 3.12, FastAPI
+- **LLM**: gpt-oss:120b (local) / Gemini 2.5 Flash (cloud)
+- **Embeddings**: bge-m3 (local) / Jina v4 (cloud)
+- **Visual Search**: ColQwen2.5 (local) / Jina CLIP v2 (cloud)
+- **Vector DB**: Weaviate 1.34
+- **Backend**: Python 3.12, FastAPI, DSPy
 - **Frontend**: Next.js 16, React 19, Tailwind v4
 - **Parsing**: LandingAI ADE

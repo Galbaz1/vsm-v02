@@ -1,10 +1,10 @@
 import json
-import weaviate
 from urllib.parse import quote
 from typing import Optional, List, Dict, Set
 from fastapi import HTTPException
 
 from api.core.config import get_settings
+from api.core.providers import get_embeddings, get_vectordb
 from api.schemas.search import SearchHit, PageHit, BoundingBox
 
 COLLECTION_NAME = "AssetManual"
@@ -41,32 +41,44 @@ def _parse_bbox(raw: Optional[object]) -> Optional[BoundingBox]:
             return None
     return None
 
-def perform_search(query: str, limit: int, chunk_type: Optional[str], group_by_page: bool) -> tuple[List[SearchHit], Optional[Dict[str, PageHit]]]:
+async def perform_search(query: str, limit: int, chunk_type: Optional[str], group_by_page: bool) -> tuple[List[SearchHit], Optional[Dict[str, PageHit]]]:
+    """
+    Perform text search using the configured VectorDB provider.
+    
+    Uses hybrid search (vector + keyword).
+    """
     try:
-        with weaviate.connect_to_local() as client:
-            coll = client.collections.use(COLLECTION_NAME)
-
-            from weaviate.classes.query import Filter
-
-            filters = None
-            if chunk_type:
-                filters = Filter.by_property("chunk_type").equal(chunk_type)
-
-            # Use hybrid search (vector + BM25 keyword) for better recall
-            result = coll.query.hybrid(
-                query=query,
-                limit=limit * 2 if group_by_page else limit,
-                filters=filters,
-                alpha=0.5,  # Balance between vector (1.0) and keyword (0.0)
-            )
+        # 1. Generate embedding for the query
+        embeddings = get_embeddings()
+        query_vector = await embeddings.embed_query(query)
+        
+        # 2. Build filters
+        filters = None
+        if chunk_type:
+            filters = {"chunk_type": chunk_type}
+            
+        # 3. Execute search via provider
+        vectordb = get_vectordb()
+        results = await vectordb.hybrid_search(
+            collection=COLLECTION_NAME,
+            query=query,
+            query_vector=query_vector,
+            limit=limit * 2 if group_by_page else limit,
+            alpha=0.5,
+            filters=filters,
+        )
+            
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Weaviate error: {exc}") from exc
+        raise HTTPException(status_code=503, detail=f"Search provider error: {exc}") from exc
 
     hits: List[SearchHit] = []
     seen_hashes: Dict[str, Set[str]] = {}  # {(manual, page): {content_hash}}
     
-    for obj in result.objects:
-        props = obj.properties or {}
+    for obj in results:
+        # Provider returns dict with "properties", "id", "score"
+        props = obj.get("properties", {})
+        uuid = obj.get("id")
+        
         manual_name = props.get("manual_name") or "Unknown Manual"
         page_number = props.get("page_number")
         bbox = _parse_bbox(props.get("bbox"))
@@ -86,7 +98,7 @@ def perform_search(query: str, limit: int, chunk_type: Optional[str], group_by_p
             seen_hashes[key].add(content_hash)
         
         hit = SearchHit(
-            anchor_id=props.get("anchor_id", obj.uuid),
+            anchor_id=props.get("anchor_id") or uuid or str(hash(props.get("content", "")))[:16],
             manual_name=manual_name,
             content=props.get("content", ""),
             page_number=page_number,
