@@ -183,6 +183,9 @@ class JinaVisualSearch(VisualSearchProvider):
         """
         Retrieve page image bytes from Weaviate blob.
         """
+        return await asyncio.to_thread(self._get_page_image_sync, page_id)
+
+    def _get_page_image_sync(self, page_id: int) -> Optional[bytes]:
         client = self._get_client()
         
         try:

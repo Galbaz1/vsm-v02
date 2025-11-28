@@ -1,8 +1,10 @@
+# Secrets
+.env
+
 # Python
 __pycache__/
 *.pyc
-.env
-.venv
+.venv/
 venv/
 
 # Node
@@ -13,9 +15,12 @@ yarn-error.log
 # System
 .DS_Store
 
-# Generated
+# Generated (large files)
 static/previews/
+
+# Verbose logs (but keep logs/benchmarks/*.json)
 *.log
+logs/query_traces/
 
 # Analysis Agent output
 context_agent/*.md

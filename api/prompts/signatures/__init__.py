@@ -10,18 +10,20 @@ Defines model-agnostic contracts for:
 from api.prompts.signatures.decision import DecisionSignature
 from api.prompts.signatures.search import SearchQuerySignature
 from api.prompts.signatures.response import ResponseSignature
+from api.prompts.signatures.technical_judge import TechnicalJudgeSignature
 
 # Map names to signature classes for dynamic loading
 SIGNATURE_MAP = {
     "decision": DecisionSignature,
     "search": SearchQuerySignature,
     "response": ResponseSignature,
+    "technical_judge": TechnicalJudgeSignature,
 }
 
 __all__ = [
     "DecisionSignature",
     "SearchQuerySignature",
     "ResponseSignature",
+    "TechnicalJudgeSignature",
     "SIGNATURE_MAP",
 ]
-

@@ -144,6 +144,9 @@ class ColQwenVisualSearch(VisualSearchProvider):
         
         Looks up the image_path in Weaviate and reads the file.
         """
+        return await asyncio.to_thread(self._get_page_image_sync, page_id)
+
+    def _get_page_image_sync(self, page_id: int) -> Optional[bytes]:
         import weaviate
         from weaviate.classes.query import Filter
         

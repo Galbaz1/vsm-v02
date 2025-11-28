@@ -22,8 +22,16 @@ File Structure:
 """
 
 import logging
+import os
 from pathlib import Path
 from typing import Dict, Optional
+
+# Ensure DSPy cache is writable in sandboxed/test environments before importing dspy
+_cache_dir = Path(__file__).resolve().parent.parent.parent / ".dspy-cache"
+_cache_dir.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("DSPY_CACHE_DIR", str(_cache_dir))
+os.environ.setdefault("DSPY_CACHE_PATH", str(_cache_dir / "cache.sqlite"))
+os.environ.setdefault("DSPY_DISABLE_CACHE", "1")
 
 import dspy
 
@@ -147,4 +155,3 @@ __all__ = [
     "get_vsm_module",
     "reset_compiled_modules",
 ]
-

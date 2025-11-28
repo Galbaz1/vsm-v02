@@ -1,7 +1,8 @@
 """
-Cloud LLM Provider - Gemini 2.5 Flash.
+Cloud LLM Provider - GPT-5.1 (primary) + Gemini 2.5 Flash (fallback).
 
-Uses the google-genai SDK (python-genai) for generation.
+Primary: OpenAI GPT-5.1 via Responses API (more reliable, high reasoning)
+Fallback: Gemini 2.5 Flash (has intermittent empty response issues)
 
 Ref: https://ai.google.dev/gemini-api/docs/thinking
 Ref: https://github.com/googleapis/python-genai
@@ -188,8 +189,32 @@ class GeminiLLM(LLMProvider):
         messages: List[Dict[str, str]],
         **kwargs
     ) -> AsyncGenerator[str, None]:
-        """Stream chat completion token-by-token using Gemini."""
-        # Convert messages to Gemini format
+        """
+        Stream chat completion using GPT-5.1 (primary) with Gemini fallback.
+        
+        GPT-5.1 is more reliable than Gemini which has intermittent empty response issues.
+        Falls back to Gemini if OpenAI key not set or GPT-5.1 fails.
+        """
+        # Build prompt for GPT-5.1
+        full_prompt = ""
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            full_prompt += f"{role}: {content}\n"
+        
+        settings = get_settings()
+        
+        # Try GPT-5.1 first (more reliable)
+        if settings.openai_api_key:
+            gpt_result = await self._gpt51_primary(full_prompt, kwargs)
+            if gpt_result:
+                yield gpt_result
+                return
+            logger.warning("GPT-5.1 failed, falling back to Gemini...")
+        else:
+            logger.info("OPENAI_API_KEY not set, using Gemini directly")
+        
+        # Fall back to Gemini
         contents = []
         for msg in messages:
             role = msg.get("role", "user")
@@ -210,13 +235,78 @@ class GeminiLLM(LLMProvider):
             max_tokens=kwargs.get("max_tokens", 2048),
         )
         
-        # Use async streaming API
-        response_stream = await self._client.aio.models.generate_content_stream(
-            model=self._model,
-            contents=contents,
-            config=config,
-        )
+        try:
+            response_stream = await self._client.aio.models.generate_content_stream(
+                model=self._model,
+                contents=contents,
+                config=config,
+            )
+            
+            chunk_count = 0
+            text_yielded = False
+            async for chunk in response_stream:
+                chunk_count += 1
+                if chunk.text:
+                    text_yielded = True
+                    yield chunk.text
+            
+            # If we got chunks but none had text, or no chunks at all, raise
+            if not text_yielded:
+                error_msg = f"Gemini returned {chunk_count} chunks but no text content"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+                    
+        except Exception as e:
+            logger.error(f"Gemini fallback error: {e}")
+            raise
+    
+    async def _gpt51_primary(
+        self,
+        prompt: str,
+        kwargs: Dict,
+    ) -> Optional[str]:
+        """
+        Primary LLM: GPT-5.1 using OpenAI Responses API.
         
-        async for chunk in response_stream:
-            if chunk.text:
-                yield chunk.text
+        GPT-5.1 is a thinking model with high reasoning capabilities.
+        More reliable than Gemini (no empty response issues).
+        """
+        settings = get_settings()
+        
+        try:
+            from openai import OpenAI
+            import asyncio
+            
+            client = OpenAI(api_key=settings.openai_api_key)
+            
+            logger.info(f"GPT-5.1 primary: Using {settings.openai_model}")
+            
+            # GPT-5.1 uses the Responses API with reasoning
+            # Run in thread pool since OpenAI SDK is sync
+            def call_gpt51():
+                try:
+                    # Try Responses API (GPT-5.1)
+                    response = client.responses.create(
+                        model=settings.openai_model,
+                        input=prompt,
+                        reasoning={"effort": "high"},
+                    )
+                    return response.output_text
+                except AttributeError:
+                    # Fall back to Chat Completions if Responses API unavailable
+                    logger.warning("GPT-5.1 Responses API unavailable, using chat completions")
+                    response = client.chat.completions.create(
+                        model="gpt-4o",  # Fallback model
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=kwargs.get("max_tokens", 2048),
+                        temperature=kwargs.get("temperature", 0.7),
+                    )
+                    return response.choices[0].message.content
+            
+            result = await asyncio.to_thread(call_gpt51)
+            logger.info(f"GPT-5.1 primary successful: {len(result)} chars")
+            return result
+            
+        except Exception as e:
+            logger.error(f"GPT-5.1 primary error: {e}")
+            return None

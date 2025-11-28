@@ -38,6 +38,13 @@ fi
 
 echo "✅ API keys loaded from .env"
 
+# Optional: GPT-5.1 fallback for reliability
+if [ -z "$OPENAI_API_KEY" ]; then
+    echo "⚠️  OPENAI_API_KEY not set (GPT-5.1 fallback disabled)"
+else
+    echo "✅ GPT-5.1 fallback enabled"
+fi
+
 # Activate conda
 eval "$(conda shell.bash hook)"
 conda activate vsm-hva

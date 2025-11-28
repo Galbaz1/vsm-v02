@@ -8,6 +8,7 @@ Ref: https://weaviate.io/developers/weaviate/client-libraries/python
 """
 
 import logging
+import asyncio
 from typing import List, Dict, Any, Optional
 
 from api.core.config import get_settings
@@ -90,6 +91,21 @@ class WeaviateCloud(VectorDBProvider):
         Returns:
             List of result objects with properties and metadata
         """
+        return await asyncio.to_thread(
+            self._vector_search_sync,
+            collection,
+            query_vector,
+            limit,
+            filters
+        )
+
+    def _vector_search_sync(
+        self,
+        collection: str,
+        query_vector: List[float],
+        limit: int,
+        filters: Optional[Dict[str, Any]],
+    ) -> List[Dict]:
         client = self.connect()
         
         import weaviate.classes.query as wq
@@ -149,6 +165,25 @@ class WeaviateCloud(VectorDBProvider):
         Returns:
             List of result objects
         """
+        return await asyncio.to_thread(
+            self._hybrid_search_sync,
+            collection,
+            query,
+            query_vector,
+            limit,
+            alpha,
+            filters
+        )
+
+    def _hybrid_search_sync(
+        self,
+        collection: str,
+        query: str,
+        query_vector: List[float],
+        limit: int,
+        alpha: float,
+        filters: Optional[Dict[str, Any]],
+    ) -> List[Dict]:
         client = self.connect()
         
         import weaviate.classes.query as wq
@@ -198,6 +233,13 @@ class WeaviateCloud(VectorDBProvider):
             collection: Collection name
             objects: List of objects with 'properties' and optionally 'vector'
         """
+        await asyncio.to_thread(self._batch_upsert_sync, collection, objects)
+
+    def _batch_upsert_sync(
+        self,
+        collection: str,
+        objects: List[Dict[str, Any]],
+    ) -> None:
         client = self.connect()
         
         coll = client.collections.get(collection)

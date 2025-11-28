@@ -1,17 +1,45 @@
 # VSM v0.3 - Cloud Migration & DSPy Architecture
 
-**Status:** 🟢 Phases 0-6 Complete | 🟡 Phase 7 Ready to Start  
+**Status:** 🟢 Phases 0-7 Complete | 🟡 Phase 8 In Progress (Backend ~80%, Frontend ~20%)  
 **Goal:** Unified Local/Cloud Architecture with DSPy Agentic Logic  
-**Last Updated:** 2025-11-27
+**Last Updated:** 2025-11-28
 
 ---
 
-## Critical Issues to Fix First
+## Current Issues (Active)
 
-| Issue | Location | Impact | Status |
-|-------|----------|--------|--------|
-| ~~Hardcoded paths~~ | `api/services/tools/visual_tools.py` | ~~Breaks on non-lab machines~~ | ✅ Fixed |
-| ~~Empty config.py~~ | `api/core/config.py` | ~~Missing VSM_MODE~~ | ✅ Fixed |
+### 🔴 Frontend Issues
+
+| Issue | Location | Impact | Evidence |
+|-------|----------|--------|----------|
+| **Agentic sources not clickable** | `frontend/app/page.tsx:354` | Sources show as badges but can't open preview modal | Screenshot: sources are `<Badge>` with no onClick |
+| **Visual results no thumbnails** | `frontend/app/page.tsx:377-382` | Cloud mode shows empty image boxes | `preview_url` is `null` for cloud (base64 blobs in Weaviate) |
+| **Visual results empty scores** | `frontend/app/page.tsx:388` | Shows "Score:" with no value | `maxsim_score` not populated in cloud results |
+| **Duplicate source badges** | `api/services/tools/base.py:281` | Same page appears multiple times | No de-duplication before yielding Response |
+
+### 🔴 Backend Issues (Benchmark Data Capture)
+
+| Issue | Location | Impact | Evidence |
+|-------|----------|--------|----------|
+| **Benchmark `model_answer` empty** | `api/services/benchmark.py` | Judge scores 0.0 for working queries | `logs/benchmarks/20251128-085417-cloud.json:32` |
+| **Benchmark `sources` empty** | `api/services/benchmark.py` | Can't calculate Hit@k/MRR | `logs/benchmarks/20251128-085417-cloud.json:33` |
+| **Benchmark `tools_used` empty** | `api/services/benchmark.py` | Missing tool distribution metrics | `logs/benchmarks/20251128-085417-cloud.json:39` |
+
+### 🟡 Backend Issues (Data Quality)
+
+| Issue | Location | Impact |
+|-------|----------|--------|
+| **Sources not de-duplicated** | `api/services/tools/base.py:281` | Returns duplicate page references |
+| **No source type tracking** | `api/schemas/agent.py:162` | Can't distinguish text vs visual sources |
+| **No relevance score in sources** | `api/schemas/agent.py:162` | Can't rank sources by importance |
+
+### ✅ Fixed Issues
+
+| Issue | Location | Fix |
+|-------|----------|-----|
+| ~~Hardcoded paths~~ | `api/services/tools/visual_tools.py` | Dynamic `Path(__file__)` |
+| ~~Empty config.py~~ | `api/core/config.py` | Full VSM_MODE support |
+| ~~Gemini empty response~~ | `api/core/providers/cloud/llm.py` | GPT-5.1 primary, Gemini fallback |
 
 ---
 
@@ -252,13 +280,98 @@ python -c "from api.core.providers.cloud.llm import GeminiLLM; print('OK')"
 
 ---
 
-## Phase 8: Benchmarking System
-> **Goal:** Evaluate performance of both modes.
+## Phase 8: Benchmarking & Observability System
+> **Status:** 🟡 In Progress (Backend ~80%, Frontend ~20%)  
+> **Goal:** Evaluate local vs cloud end-to-end (quality, latency, cost, stability) with reproducible reports.  
+> **Sources:** `data/benchmarks/benchmarksv03.json`, `api/services/benchmark.py`, `scripts/run_benchmark.py`  
+> **Research:** Arize Phoenix, LangSmith, Weaviate Elysia Frontend patterns
 
-- [ ] Implement `TechnicalJudge` (DSPy module)
-- [ ] Create Benchmark API (`/benchmark/evaluate`)
-- [ ] Create Frontend Benchmark Mode UI
-- [ ] Create `scripts/run_benchmark.py`
+### 8.1 Benchmark Spec ✅
+- [x] Dataset: use `data/benchmarks/benchmarksv03.json` (id, query, expected_answer, expected_citations).
+- [x] Metrics: Hit@k / MRR (retrieval), Response quality via `TechnicalJudge` (0–1), Latency (p50/p95), Loop health.
+- [x] Modes: run both `VSM_MODE=local` and `VSM_MODE=cloud`; store results side-by-side.
+
+### 8.2 Judge Module (DSPy) ✅
+- [x] `TechnicalJudgeSignature` in `api/prompts/signatures/technical_judge.py`
+- [x] Judge service in `api/services/judge.py`
+- [x] Compiled state placeholders in `api/prompts/{local,cloud}/technical_judge.json`
+
+### 8.3 Backend Harness 🟡 (Needs Fixes)
+> **File:** `api/services/benchmark.py`  
+> **Issue:** Data capture from agent events is broken (see Current Issues above)
+
+- [x] Basic structure: run query → collect events → invoke judge
+- [ ] **FIX:** Capture `model_answer` from `response` events (currently empty)
+- [ ] **FIX:** Capture `sources` from `response` events (currently empty array)
+- [ ] **FIX:** Capture `tools_used` from `decision` events (currently empty array)
+- [ ] **FIX:** Ensure event parsing handles all payload structures
+
+### 8.4 Backend: Source Quality Improvements
+> **File:** `api/services/tools/base.py`, `api/schemas/agent.py`
+
+- [ ] **De-duplicate sources** before returning in `TextResponseTool._build_context()`
+- [ ] **Extend source schema** to include `type: Literal["text", "visual"]`
+- [ ] **Add relevance score** to sources: `score: float`
+- [ ] **Track source origin** for benchmark Hit@k calculation
+
+### 8.5 API Endpoints ✅
+- [x] POST `/benchmark/evaluate` - runs benchmark, saves to `logs/benchmarks/`
+- [x] GET `/benchmark/reports` - list available reports
+- [x] GET `/benchmark/reports/{filename}` - get specific report
+
+### 8.6 CLI Runner ✅
+- [x] `scripts/run_benchmark.py --use-endpoint --max-queries N`
+- [x] `--trace` flag for detailed query traces
+- [x] Writes to `logs/benchmarks/` with timestamps
+
+### 8.7 Frontend: Agentic Mode Fixes 🔴
+> **Files:** `frontend/app/page.tsx`, `frontend/lib/types.ts`  
+> **Issue:** Agentic results lack interactivity compared to manual mode
+
+- [ ] **Make sources clickable** - add onClick to open preview modal (like manual mode)
+  - Current: `<Badge>{source.manual} - Page {source.page}</Badge>` (line 354)
+  - Needed: `<Badge onClick={() => openPreview(source)}>`
+- [ ] **Fix visual thumbnails** for cloud mode:
+  - Option A: Serve base64 as data URI in `preview_url`
+  - Option B: Add `/api/images/{page_id}` endpoint to serve blobs
+- [ ] **Display visual scores** - ensure `score` field is populated and shown
+- [ ] **Unify result display** - agentic results should match manual mode UX
+
+### 8.8 Frontend: Benchmark Dashboard 🔴
+> **Design Inspiration:** Arize Phoenix trace UI, LangSmith evaluation views, Elysia `FeedbackDetails.tsx`  
+> **User Personas:** System Architect (debug mode) + Product Owner (metrics mode)
+
+#### 8.8.1 Dashboard Views
+- [ ] **Reports List** (`/benchmark`) - table of past runs with:
+  - Timestamp, mode (local/cloud), avg score, latency p50, success rate
+  - Click to open detailed view
+- [ ] **Report Detail** (`/benchmark/{id}`) - single run analysis:
+  - Summary cards: avg score, Hit@k, MRR, latency histogram
+  - Per-query table with expandable rows
+  - Failed/low-score queries highlighted with trace links
+
+#### 8.8.2 Query Drill-Down
+- [ ] **Trace Viewer** - step-by-step agent execution:
+  - Decision tree visualization (tool → result → next decision)
+  - Expand each step to see inputs/outputs
+  - Highlight errors in red
+- [ ] **Side-by-Side Comparison** (stretch goal):
+  - Compare same query across local vs cloud
+  - Diff view for answers
+
+#### 8.8.3 Metrics Visualization
+- [ ] **Score Distribution** - histogram of judge scores
+- [ ] **Latency Chart** - p50/p95 over queries
+- [ ] **Tool Usage Sankey** - flow diagram of tool sequences
+- [ ] **Source Coverage** - which pages are most cited
+
+### 8.9 Acceptance Checklist
+- [x] One command to run benchmarks locally and in cloud mode
+- [ ] **Benchmark captures actual data** (model_answer, sources, tools_used)
+- [ ] **Judge scores reflect real quality** (not 0.0 for working queries)
+- [ ] **Sources are clickable** in agentic mode
+- [ ] **Visual results show thumbnails** in cloud mode
+- [ ] **Dashboard shows historical runs** with drill-down
 
 ---
 
@@ -299,6 +412,25 @@ python -c "from api.core.providers.cloud.llm import GeminiLLM; print('OK')"
 | **DSPy + Gemini Thinking** | [Stack Overflow](https://stackoverflow.com/questions/79809980/turn-off-geminis-reasoning-in-dspy) | Use `reasoning_effort="disable"` to turn off thinking |
 | **Gemini thinkingBudget** | [Google AI Docs](https://ai.google.dev/gemini-api/docs/thinking) | 2.5 Flash: 0-24576, -1=dynamic, 0=off |
 | **Weaviate Multi-Vector** | [Weaviate Docs](https://weaviate.io/blog/late-interaction-overview) | Named vectors supported in v1.29+ |
+| **Gemini Empty Response Bug** | [Google AI Forum](https://discuss.ai.google.dev/t/gemini-2-5-pro-with-empty-response-text/81175) | Known API issue, use fallback LLM |
+
+### Observability & Dashboard Research
+
+| Tool | Key Pattern | Applicability |
+|------|-------------|---------------|
+| **MLflow + DSPy** | `mlflow.dspy.autolog()` | Built-in DSPy tracing support |
+| **Arize Phoenix** | `DSPyInstrumentor()` | Open source trace explorer UI |
+| **LangWatch** | DSPy Visualizer | Shows optimization progress |
+| **Langfuse** | `propagate_attributes()` | Session/user metadata grouping |
+| **Elysia Frontend** | `FeedbackDetails.tsx`, `debug.tsx` | Agent decision transparency patterns |
+
+### Elysia Frontend Patterns (for Dashboard)
+
+| Component | Source | Pattern |
+|-----------|--------|---------|
+| `FeedbackDetails.tsx` | `elysia-frontend/app/components/evaluation/` | Rating + feedback collection UI |
+| `debug.tsx` | `elysia-frontend/app/components/debugging/` | Error visualization, step inspector |
+| Environment display | `elysia/tree/objects.py` | `environment.to_llm_context()` for trace context |
 
 ### Architecture Docs
 
@@ -311,13 +443,16 @@ python -c "from api.core.providers.cloud.llm import GeminiLLM; print('OK')"
 
 ### Elysia Patterns Used
 
-| Pattern | Elysia Source | VSM Location |
-|---------|---------------|--------------|
-| `TreeData` state object | `elysia/tree/objects.py` | `api/services/environment.py` |
-| `Tool` base class | `elysia/objects.py` | `api/services/tools/base.py` |
-| `Environment` store | `elysia/tree/objects.py` | `api/services/environment.py` |
-| `update_tasks_completed` | Lines 685-742 | `TreeData.update_tasks_completed()` |
-| Decision loop | `elysia/tree/tree.py` | `AgentOrchestrator.run()` |
+| Pattern | Elysia Source | VSM Location | Status |
+|---------|---------------|--------------|--------|
+| `TreeData` state object | `elysia/tree/objects.py` | `api/services/environment.py` | ✅ Implemented |
+| `Tool` base class | `elysia/objects.py` | `api/services/tools/base.py` | ✅ Implemented |
+| `Environment` store | `elysia/tree/objects.py` | `api/services/environment.py` | ✅ Implemented |
+| `update_tasks_completed` | Lines 685-742 | `TreeData.update_tasks_completed()` | ✅ Implemented |
+| Decision loop | `elysia/tree/tree.py` | `AgentOrchestrator.run()` | ✅ Implemented |
+| `FeedbackDetails` UI | `elysia-frontend/evaluation/` | `frontend/app/benchmark/` | 🔴 Needed |
+| Debug trace view | `elysia-frontend/debugging/` | `frontend/app/benchmark/` | 🔴 Needed |
+| Text response sources | `elysia/tools/text/text.py` | `api/services/tools/base.py` | 🟡 Needs fix |
 
 ---
 

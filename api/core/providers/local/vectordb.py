@@ -1,5 +1,6 @@
 """Local VectorDB Provider - Wraps Weaviate Docker for TEXT search."""
 
+import asyncio
 import logging
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
 
@@ -29,11 +30,9 @@ class WeaviateLocal(VectorDBProvider):
         """Get or create Weaviate client connection."""
         if self._client is None:
             import weaviate
-            # Parse host from URL (remove http://)
-            host = self.url.replace("http://", "").replace("https://", "")
-            if ":" in host:
-                host = host.split(":")[0]
-            self._client = weaviate.connect_to_local(host=host)
+            # connect_to_local() accepts no parameters in v4 - uses default localhost:8080
+            # For custom URLs, use connect_to_custom()
+            self._client = weaviate.connect_to_local()
         return self._client
     
     async def vector_search(
@@ -44,6 +43,21 @@ class WeaviateLocal(VectorDBProvider):
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict]:
         """Perform vector similarity search."""
+        return await asyncio.to_thread(
+            self._vector_search_sync,
+            collection,
+            query_vector,
+            limit,
+            filters
+        )
+
+    def _vector_search_sync(
+        self,
+        collection: str,
+        query_vector: List[float],
+        limit: int,
+        filters: Optional[Dict[str, Any]],
+    ) -> List[Dict]:
         client = self.connect()
         
         try:
@@ -90,6 +104,25 @@ class WeaviateLocal(VectorDBProvider):
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict]:
         """Perform hybrid search (vector + BM25)."""
+        return await asyncio.to_thread(
+            self._hybrid_search_sync,
+            collection,
+            query,
+            query_vector,
+            limit,
+            alpha,
+            filters
+        )
+
+    def _hybrid_search_sync(
+        self,
+        collection: str,
+        query: str,
+        query_vector: List[float],
+        limit: int,
+        alpha: float,
+        filters: Optional[Dict[str, Any]],
+    ) -> List[Dict]:
         client = self.connect()
         
         try:
@@ -133,6 +166,13 @@ class WeaviateLocal(VectorDBProvider):
         objects: List[Dict[str, Any]],
     ) -> None:
         """Batch upsert objects with dense embeddings (for text ingestion)."""
+        await asyncio.to_thread(self._batch_upsert_sync, collection, objects)
+
+    def _batch_upsert_sync(
+        self,
+        collection: str,
+        objects: List[Dict[str, Any]],
+    ) -> None:
         client = self.connect()
         
         try:

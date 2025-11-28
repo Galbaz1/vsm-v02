@@ -145,7 +145,7 @@ class VisualInterpretationTool(Tool):
                         "page_number": obj.get("page_number"),
                         "asset_manual": obj.get("asset_manual"),
                         "image_path": obj.get("image_path"),
-                        "score": obj.get("maxsim_score") or obj.get("score", 0),
+                        "score": obj.get("maxsim_score") if obj.get("maxsim_score") is not None else obj.get("score", 0),
                     })
         
         if not pages_to_analyze:

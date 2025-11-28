@@ -288,7 +288,8 @@ Answer:"""
                 chunk_text = f"[Page {page}, {manual}]: {content}"
             elif obj.get("maxsim_score") is not None or obj.get("score") is not None:
                 # Visual result from ColQwen - describe what was found
-                score = obj.get("maxsim_score") or obj.get("score", 0)
+                maxsim = obj.get("maxsim_score")
+                score = maxsim if maxsim is not None else obj.get("score", 0)
                 # Handle both local path and potential future cloud URL
                 image_ref = obj.get("preview_url") or obj.get("image_path", "")
                 chunk_text = f"[Page {page}, {manual}]: Visual match found (score: {score:.2f}). View page image at: {image_ref}"

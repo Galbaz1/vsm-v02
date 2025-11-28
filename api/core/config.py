@@ -46,6 +46,10 @@ class Settings(BaseModel):
     # Weaviate Cloud (handles both text and visual search)
     weaviate_cloud_url: str = Field(default="", description="Weaviate Cloud cluster URL")
     weaviate_cloud_api_key: str = Field(default="", description="Weaviate Cloud API key")
+    
+    # OpenAI (fallback for Gemini failures)
+    openai_api_key: str = Field(default="", description="OpenAI API key for GPT-5.1 fallback")
+    openai_model: str = Field(default="gpt-5.1", description="OpenAI model (GPT-5.1 Responses API)")
 
 
 @lru_cache
@@ -82,4 +86,8 @@ def get_settings() -> Settings:
         jina_api_key=os.getenv("JINA_API_KEY", ""),
         weaviate_cloud_url=os.getenv("WEAVIATE_URL", ""),
         weaviate_cloud_api_key=os.getenv("WEAVIATE_API_KEY", ""),
+        
+        # OpenAI fallback
+        openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+        openai_model=os.getenv("OPENAI_MODEL", "gpt-5.1"),
     )

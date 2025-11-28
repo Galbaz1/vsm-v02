@@ -9,31 +9,38 @@ alwaysApply: true
 
 | Date | Issue | Fix | File |
 |------|-------|-----|------|
-| 2025-11-27 | Agent Refactor | Replaced logic with DSPy `decision` module | `api/services/agent.py` |
-| 2025-11-27 | Tools Refactor | Converted all tools to use `api/core/providers/` | `api/services/tools/` |
-| 2025-11-27 | DSPy signatures missing | Created Decision, Search, Response signatures | `api/prompts/signatures/` |
-| 2025-11-27 | DSPy config missing | Added configure_dspy() with Gemini thinking control | `api/core/dspy_config.py` |
-| 2025-11-27 | Provider layer missing | Created full provider abstraction with factories | `api/core/providers/` |
+| 2025-11-28 | LLM reliability | Swapped to GPT-5.1 primary, Gemini fallback (intermittent empty responses) | `api/core/providers/cloud/llm.py` |
+| 2025-11-28 | DSPy thread context | Fixed thread-local settings propagation via `dspy.settings.context()` | `api/services/agent.py` |
+| 2025-11-28 | Benchmark structure | Implemented TechnicalJudge, metrics, CLI runner | `api/services/benchmark.py` |
+| 2025-11-28 | Benchmark type fixes | Fixed Hit@k/MRR string type comparison | `api/services/benchmark.py` |
+| 2025-11-27 | Provider layer | Created full provider abstraction with factories | `api/core/providers/` |
 
 ## Known Issues
 
 | Issue | Location | Impact |
 |-------|----------|--------|
 | Weaviate protobuf issue | `weaviate` package | Lazy imports as workaround |
+| **Benchmark data capture** | `api/services/benchmark.py` | `model_answer`, `sources`, `tools_used` empty |
+| **Agentic sources not clickable** | `frontend/app/page.tsx:354` | Sources show as badges, no preview |
+| **Cloud visual thumbnails** | `frontend/app/page.tsx:377` | `preview_url` null for cloud mode |
+| **Duplicate sources** | `api/services/tools/base.py:281` | Same page in sources multiple times |
 
 ## Active Migration
 
-**Cloud Migration Phase 7 Complete!** - See `TODO.md` and `docs/cloud-migration/`
+**Cloud Migration Phase 8 In Progress** - See `TODO.md`
 - ✅ Phase 5: Cloud Implementation (done)
 - ✅ Phase 6: Tool & Agent Refactor (done)
 - ✅ Phase 7: Cloud Ingestion (complete - 260 text chunks, 260 visual pages)
-- ✅ Goal achieved: `VSM_MODE=local|cloud` toggle working
+- 🟡 Phase 8: Benchmarking System (backend ~80%, frontend ~20%)
+  - Backend: Judge works, but event capture broken
+  - Frontend: Dashboard not started, agentic UX issues
 
 ## Last Benchmark
 
 ```
-Date: 2025-11-27
-Status: Cloud mode tested - text search, visual search, LLM streaming, agent flow all working
+Date: 2025-11-28
+Status: Backend harness runs, but data capture issues cause 0.0 scores
+Evidence: logs/benchmarks/20251128-085417-cloud.json shows empty model_answer
 ```
 
 ---

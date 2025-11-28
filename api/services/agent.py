@@ -158,6 +158,12 @@ class AgentOrchestrator:
         
         Uses the "decision" module which auto-injects context via VSMChainOfThought.
         """
+        import dspy
+        from api.core.dspy_config import get_dspy_lm
+        
+        # Ensure DSPy is configured and capture the LM
+        lm = get_dspy_lm()
+        
         # Get DSPy module
         decision_module = get_vsm_module("decision")
         
@@ -171,19 +177,17 @@ class AgentOrchestrator:
             })
         tools_json = json.dumps(tools_list, indent=2)
         
-        # Run DSPy prediction (synchronous call, but DSPy handles async internally if configured?)
-        # Note: DSPy 2.5+ supports async but standard modules might be sync.
-        # We wrap in asyncio.to_thread if it blocks, but dspy.LM usually handles this.
-        # However, VSMChainOfThought.forward calls self.predictor() which is sync.
-        # Ideally we should use async DSPy, but for now we'll assume sync is fast enough or run in thread.
-        
-        # For now, run in thread to avoid blocking the event loop
+        # Run DSPy prediction in thread pool.
+        # IMPORTANT: DSPy settings are thread-local, so we must use dspy.settings.context()
+        # to propagate the LM config to the worker thread.
         def run_decision():
-            return decision_module(
-                tree_data=tree_data,
-                available_tools=tools_json,
-                iteration=f"{tree_data.num_iterations}/{self.max_iterations}",
-            )
+            # Apply DSPy settings in this worker thread
+            with dspy.settings.context(lm=lm):
+                return decision_module(
+                    tree_data=tree_data,
+                    available_tools=tools_json,
+                    iteration=f"{tree_data.num_iterations}/{self.max_iterations}",
+                )
             
         result = await asyncio.to_thread(run_decision)
         

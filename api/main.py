@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 
 from api.core.config import get_settings
 from api.endpoints import health, search, agentic
+from api.endpoints import benchmark
 
 app = FastAPI(
     title="Manual Search API",
@@ -32,3 +33,4 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 app.include_router(health.router)
 app.include_router(search.router)
 app.include_router(agentic.router, tags=["agentic"])
+app.include_router(benchmark.router, tags=["benchmark"])
