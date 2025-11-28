@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Fix Turbopack warning about multiple lockfiles
+  turbopack: {
+    root: __dirname,
+  },
   async rewrites() {
     return [
       {

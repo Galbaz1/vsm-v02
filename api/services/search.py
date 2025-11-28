@@ -78,6 +78,7 @@ async def perform_search(query: str, limit: int, chunk_type: Optional[str], grou
         # Provider returns dict with "properties", "id", "score"
         props = obj.get("properties", {})
         uuid = obj.get("id")
+        score = obj.get("score")
         
         manual_name = props.get("manual_name") or "Unknown Manual"
         page_number = props.get("page_number")
@@ -102,6 +103,7 @@ async def perform_search(query: str, limit: int, chunk_type: Optional[str], grou
             manual_name=manual_name,
             content=props.get("content", ""),
             page_number=page_number,
+            score=score,
             bbox=bbox,
             pdf_page_url=pdf_url,
             page_image_url=preview_url,

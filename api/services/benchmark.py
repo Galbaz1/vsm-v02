@@ -76,6 +76,71 @@ class BenchmarkRunResult:
     summary: Dict[str, Any] = field(default_factory=dict)
 
 
+def _merge_sources(
+    existing: List[Dict[str, Any]],
+    new_sources: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Merge source lists while de-duplicating by (manual, page, type).
+    
+    Prefers higher scores and keeps insertion order for ranking.
+    """
+    source_map: Dict[tuple, Dict[str, Any]] = {}
+    order = 0
+    
+    def add_source(src: Dict[str, Any]) -> None:
+        nonlocal order
+        if not isinstance(src, dict):
+            return
+        
+        manual = src.get("manual") or src.get("manual_name") or src.get("asset_manual") or "unknown"
+        page = src.get("page") or src.get("page_number")
+        try:
+            page_val = int(page) if page is not None else None
+        except (TypeError, ValueError):
+            return
+        
+        source_type = src.get("type")
+        if not source_type:
+            is_visual = bool(
+                src.get("preview_url") or src.get("page_image_url") or src.get("image_path") or src.get("maxsim_score")
+            )
+            source_type = "visual" if is_visual else "text"
+        
+        key = (manual, page_val, source_type)
+        if key not in source_map:
+            source_map[key] = {
+                "manual": manual,
+                "page": page_val,
+                "type": source_type,
+                "order": order,
+            }
+            order += 1
+        
+        entry = source_map[key]
+        score = src.get("score")
+        if score is None and src.get("maxsim_score") is not None:
+            score = src.get("maxsim_score")
+        if score is not None:
+            if entry.get("score") is None or score > entry.get("score", float("-inf")):
+                entry["score"] = score
+        
+        for field in ("preview_url", "pdf_page_url", "origin"):
+            value = src.get(field)
+            if value and not entry.get(field):
+                entry[field] = value
+    
+    for src in existing:
+        add_source(src)
+    for src in new_sources:
+        add_source(src)
+    
+    merged = sorted(source_map.values(), key=lambda s: s["order"])
+    for src in merged:
+        src.pop("order", None)
+    return merged
+
+
 def load_benchmark_dataset(path: str) -> List[BenchmarkItem]:
     """Load the benchmark dataset into typed items."""
     dataset_path = Path(path)
@@ -130,58 +195,101 @@ async def run_single_query(
     trace_id = None
     error = None
     
+    def record_sources(new_sources: List[Dict[str, Any]]) -> None:
+        nonlocal sources
+        if new_sources:
+            sources = _merge_sources(sources, new_sources)
+    
+    def build_sources_from_objects(
+        objs: List[Any],
+        default_type: str,
+        origin: Optional[str],
+    ) -> List[Dict[str, Any]]:
+        collected: List[Dict[str, Any]] = []
+        for obj in objs:
+            if not isinstance(obj, dict):
+                continue
+            
+            manual = obj.get("manual") or obj.get("manual_name") or obj.get("asset_manual")
+            page = obj.get("page") or obj.get("page_number")
+            
+            source_type = obj.get("type") or default_type
+            is_visual = bool(
+                obj.get("preview_url")
+                or obj.get("page_image_url")
+                or obj.get("image_path")
+                or obj.get("maxsim_score") is not None
+            )
+            if not obj.get("content") and is_visual:
+                source_type = "visual"
+            
+            score = obj.get("score")
+            if score is None and obj.get("maxsim_score") is not None:
+                score = obj.get("maxsim_score")
+            
+            preview_url = obj.get("preview_url") or obj.get("page_image_url")
+            pdf_page_url = obj.get("pdf_page_url")
+            
+            origin_val = obj.get("origin")
+            if not origin_val:
+                ref_id = obj.get("_REF_ID")
+                if ref_id and isinstance(ref_id, str):
+                    parts = ref_id.split("_")
+                    origin_val = "_".join(parts[:-3]) if len(parts) >= 4 else None
+            
+            collected.append({
+                "manual": manual,
+                "page": page,
+                "type": source_type,
+                "score": score,
+                "preview_url": preview_url,
+                "pdf_page_url": pdf_page_url,
+                "origin": origin or origin_val,
+            })
+        return collected
+    
     try:
         async for event in agent.run(item.query):
-            if isinstance(event, dict):
-                event_type = event.get("type")
+            if not isinstance(event, dict):
+                continue
+            
+            event_type = event.get("type")
+            payload = event.get("payload", {}) or {}
+            
+            if event_type == "decision":
+                tool = payload.get("tool") or payload.get("tool_name")
+                if tool:
+                    tools_used.append(tool)
+                iterations += 1
                 
-                if event_type == "decision":
-                    payload = event.get("payload", {})
-                    tool = payload.get("tool")  # Decision.to_frontend uses "tool" not "tool_name"
-                    if tool:
-                        tools_used.append(tool)
-                    iterations += 1
-                    
-                elif event_type == "response":
-                    # TextResponseTool yields Response with text
-                    payload = event.get("payload", {})
-                    response_text = payload.get("text", "")
-                    # Only update if we got a non-trivial response
-                    # (avoid overwriting good answer with empty or short default messages)
-                    if response_text and len(response_text) > 50:
+            elif event_type == "response":
+                # TextResponseTool yields Response with text
+                response_text = (payload.get("text") or "").strip()
+                if response_text:
+                    if len(response_text) > len(model_answer):
                         model_answer = response_text
-                    elif not model_answer:  # Only set if we don't have one yet
+                    elif not model_answer:
                         model_answer = response_text
-                    # Also capture sources from response
-                    resp_sources = payload.get("sources", [])
-                    for src in resp_sources:
-                        page = src.get("page")
-                        manual = src.get("manual")
-                        if page:
-                            sources.append({
-                                "page": str(page),
-                                "manual": manual or "unknown",
-                            })
+                record_sources(payload.get("sources") or [])
+            
+            elif event_type == "result":
+                name = payload.get("name") or ""
+                origin = payload.get("metadata", {}).get("collection") or name
+                objects = payload.get("objects") or []
                 
-                elif event_type == "result":
-                    payload = event.get("payload", {})
-                    name = payload.get("name", "")
-                    
-                    # Capture sources from search results
-                    if name in ("fast_vector_search", "hybrid_search", "colqwen_search", "search_results"):
-                        objects = payload.get("objects", [])
-                        for obj in objects:
-                            if isinstance(obj, dict):
-                                page = obj.get("page_number") or obj.get("page")
-                                manual = obj.get("manual_name") or obj.get("asset_manual")
-                                if page:
-                                    sources.append({
-                                        "page": str(page),
-                                        "manual": manual or "unknown",
-                                    })
+                result_sources: List[Dict[str, Any]] = []
+                if name == "hybrid_search" and objects:
+                    hybrid = objects[0] if isinstance(objects[0], dict) else {}
+                    result_sources.extend(build_sources_from_objects(hybrid.get("text_chunks", []) or [], "text", origin))
+                    result_sources.extend(build_sources_from_objects(hybrid.get("visual_pages", []) or [], "visual", origin))
+                else:
+                    default_type = "visual" if name in ("PDFDocuments", "colqwen_search", "visual_results") else "text"
+                    result_sources.extend(build_sources_from_objects(objects, default_type, origin))
                 
-                elif event_type == "trace":
-                    trace_id = event.get("payload", {}).get("trace_id")
+                record_sources(result_sources)
+            
+            elif event_type == "trace":
+                trace_id = payload.get("trace_id")
                     
     except Exception as e:
         error = str(e)
@@ -212,6 +320,54 @@ async def run_single_query(
         trace_id=trace_id,
         error=error,
     )
+
+
+async def run_single_benchmark(
+    query: str,
+    expected_answer: str,
+    query_id: Optional[str] = None,
+    mode: str = "cloud",
+    enable_tracing: bool = True,
+) -> Dict[str, Any]:
+    """
+    Run a single benchmark query and return immediate result.
+    
+    Used by the frontend when user clicks a suggested query.
+    
+    Args:
+        query: The search query
+        expected_answer: Ground truth for scoring
+        query_id: Optional identifier
+        mode: VSM mode (for reporting)
+        enable_tracing: Save query trace
+        
+    Returns:
+        Dict with score, answer, sources, latency, etc.
+    """
+    item = BenchmarkItem(
+        id=query_id or str(uuid.uuid4())[:8],
+        query=query,
+        expected_answer=expected_answer,
+    )
+    
+    result = await run_single_query(item, enable_tracing)
+    
+    return {
+        "id": result.id,
+        "query": result.query,
+        "expected_answer": result.expected_answer,
+        "model_answer": result.model_answer,
+        "sources": result.sources,
+        "judge_score": result.judge_score,
+        "judge_rationale": result.judge_rationale,
+        "cited_pages": result.cited_pages,
+        "latency_ms": result.latency_ms,
+        "iterations": result.iterations,
+        "tools_used": result.tools_used,
+        "trace_id": result.trace_id,
+        "error": result.error,
+        "mode": mode,
+    }
 
 
 def calculate_hit_at_k(

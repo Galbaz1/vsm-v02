@@ -5,6 +5,7 @@ pydantic
 
 # Vector database
 weaviate-client
+protobuf>=4.25,<6  # weaviate + grpc stability; protobuf 6 can cause runtime issues
 
 # Document parsing
 python-dotenv

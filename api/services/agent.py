@@ -140,13 +140,64 @@ class AgentOrchestrator:
         Decide which tool to use based on query and state.
         
         Uses DSPy module for intelligent routing, with rule-based fallback.
+        Includes hard-coded safety nets to prevent infinite loops.
         """
+        # SAFETY NET 1: Force termination if iteration >= 3 AND environment has data
+        if tree_data.num_iterations >= 3 and not tree_data.environment.is_empty():
+            logger.info(
+                f"Safety net triggered: iteration {tree_data.num_iterations} with data in env - forcing text_response"
+            )
+            return Decision(
+                tool_name="text_response",
+                inputs={"include_sources": True},
+                reasoning=f"[SAFETY] Iteration {tree_data.num_iterations} with data - synthesizing answer",
+                should_end=True,
+            )
+        
+        # SAFETY NET 2: Count tool usage, force termination if any tool called 2+ times
+        tool_counts = self._count_tool_usage(tree_data)
+        repeated_tools = [t for t, c in tool_counts.items() if c >= 2]
+        if repeated_tools and not tree_data.environment.is_empty():
+            logger.info(
+                f"Safety net triggered: tools {repeated_tools} called 2+ times - forcing text_response"
+            )
+            return Decision(
+                tool_name="text_response",
+                inputs={"include_sources": True},
+                reasoning=f"[SAFETY] Tools {repeated_tools} called multiple times - synthesizing answer",
+                should_end=True,
+            )
+        
         # Try LLM-based decision first
         try:
-            return await self._make_llm_decision(tree_data, available_tools)
+            decision = await self._make_llm_decision(tree_data, available_tools)
+            
+            # SAFETY NET 3: Override LLM if it's repeating tools
+            if decision.tool_name in tool_counts and tool_counts[decision.tool_name] >= 1:
+                if not tree_data.environment.is_empty():
+                    logger.info(
+                        f"Overriding LLM choice '{decision.tool_name}' (already called) - using text_response"
+                    )
+                    return Decision(
+                        tool_name="text_response",
+                        inputs={"include_sources": True},
+                        reasoning=f"[OVERRIDE] {decision.tool_name} already called - synthesizing from existing data",
+                        should_end=True,
+                    )
+            
+            return decision
         except Exception as e:
             logger.warning(f"LLM decision failed, falling back to rules: {e}")
             return await self._make_rule_decision(tree_data, available_tools)
+    
+    def _count_tool_usage(self, tree_data: TreeData) -> Dict[str, int]:
+        """Count how many times each tool has been called."""
+        counts: Dict[str, int] = {}
+        for task_prompt in tree_data.tasks_completed:
+            for task in task_prompt.get("task", []):
+                tool_name = task.get("task", "")
+                counts[tool_name] = counts.get(tool_name, 0) + 1
+        return counts
     
     async def _make_llm_decision(
         self,
@@ -505,6 +556,127 @@ class AgentOrchestrator:
         # Save trace for debugging
         total_time_ms = (time.time() - start_time) * 1000
         tracer.save(outcome=outcome, total_time_ms=total_time_ms)
+        
+        # Yield completion signal
+        yield Complete().to_frontend(query_id)
+    
+    async def run_with_state(
+        self,
+        user_prompt: str,
+        tree_data: TreeData,
+        query_id: Optional[str] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Run the agent with an existing TreeData state.
+        
+        Used for multi-turn conversations where we want to preserve
+        environment and conversation history across messages.
+        
+        Args:
+            user_prompt: User's current message
+            tree_data: Existing TreeData with conversation history
+            query_id: Unique ID for this query
+        
+        Yields:
+            Stream of outputs (Result, Error, Response, Status, Decision, Complete)
+        """
+        query_id = query_id or str(uuid.uuid4())
+        start_time = time.time()
+        
+        # Initialize query tracer
+        tracer = QueryTracer(
+            query_id=query_id,
+            user_query=user_prompt,
+            enabled=is_tracing_enabled(),
+        )
+        
+        # Update tree_data for this turn
+        tree_data.user_prompt = user_prompt
+        tree_data.max_iterations = self.max_iterations
+        if tree_data.atlas is None:
+            tree_data.atlas = get_atlas()
+        
+        # Track outcome
+        outcome = "completed"
+        
+        # Main decision loop
+        while tree_data.num_iterations < tree_data.max_iterations:
+            tree_data.num_iterations += 1
+            
+            # Get available tools
+            available_tools = await self._get_available_tools(tree_data)
+            
+            if not available_tools:
+                tracer.log_error("No tools available", recoverable=False)
+                yield Error(
+                    message="No tools available",
+                    recoverable=False,
+                ).to_frontend(query_id)
+                outcome = "error"
+                break
+            
+            # Check for auto-triggers
+            auto_triggers = await self._check_auto_triggers(tree_data)
+            for tool, inputs in auto_triggers:
+                yield Status(f"Auto-triggered: {tool.name}").to_frontend(query_id)
+                async for output in self._execute_tool(
+                    tool, tree_data, inputs, query_id, reasoning=f"Auto-triggered: {tool.name}"
+                ):
+                    if output:
+                        yield output
+            
+            # Make decision
+            decision = await self._make_decision(tree_data, available_tools)
+            
+            # Log iteration
+            tracer.log_iteration(
+                iteration=tree_data.num_iterations,
+                decision={
+                    "tool_name": decision.tool_name,
+                    "inputs": decision.inputs,
+                    "reasoning": decision.reasoning,
+                    "should_end": decision.should_end,
+                },
+                environment_state=get_environment_debug_state(tree_data.environment),
+            )
+            
+            # Yield decision for transparency
+            yield decision.to_frontend(query_id)
+            
+            # Check for impossible task
+            if decision.impossible:
+                yield Response(
+                    text="I cannot complete this task with the available tools.",
+                ).to_frontend(query_id)
+                outcome = "impossible"
+                break
+            
+            # Execute chosen tool
+            if decision.tool_name in self.tools:
+                tool = self.tools[decision.tool_name]
+                yield Status(tool.status).to_frontend(query_id)
+                
+                async for output in self._execute_tool(
+                    tool, tree_data, decision.inputs, query_id, reasoning=decision.reasoning
+                ):
+                    if output:
+                        yield output
+            
+            # Check if we should end
+            if decision.should_end:
+                break
+        else:
+            outcome = "max_iterations"
+            logger.warning(
+                f"Query {query_id[:8]} hit max iterations ({self.max_iterations})"
+            )
+        
+        # Save trace
+        total_time_ms = (time.time() - start_time) * 1000
+        tracer.save(outcome=outcome, total_time_ms=total_time_ms)
+        
+        # Add assistant response to conversation history
+        # (The text_response tool should have yielded a Response)
         
         # Yield completion signal
         yield Complete().to_frontend(query_id)

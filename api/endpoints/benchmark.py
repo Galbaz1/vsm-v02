@@ -2,6 +2,8 @@
 Benchmark API Endpoint.
 
 POST /benchmark/evaluate - Run benchmark and return results.
+POST /benchmark/evaluate-single - Run benchmark for a single query.
+GET /benchmark/questions - Get benchmark questions for UI suggestions.
 GET /benchmark/reports - List saved benchmark reports.
 """
 
@@ -9,16 +11,84 @@ from pathlib import Path
 from typing import Optional, List
 import json
 
-from fastapi import APIRouter, Body, Query
+from fastapi import APIRouter, Body, Query, HTTPException
 
 from api.services.benchmark import (
     run_benchmark,
+    run_single_benchmark,
     save_benchmark_report,
     serialize_run_result,
 )
 from api.core.config import get_settings
 
 router = APIRouter()
+
+
+@router.get("/benchmark/questions")
+async def get_benchmark_questions(
+    limit: int = Query(5, ge=1, le=50, description="Max questions to return"),
+    dataset_path: str = Query("data/benchmarks/benchmarksv03.json"),
+) -> List[dict]:
+    """
+    Get benchmark questions for UI suggestions.
+    
+    Returns questions with id, category, query, and expected answer.
+    """
+    filepath = Path(dataset_path)
+    if not filepath.exists():
+        raise HTTPException(404, f"Dataset not found: {dataset_path}")
+    
+    with open(filepath, "r") as f:
+        data = json.load(f)
+    
+    questions = []
+    for i, item in enumerate(data[:limit]):
+        questions.append({
+            "id": str(i + 1),
+            "category": item.get("category", ""),
+            "query": item.get("query", ""),
+            "expected_answer": item.get("answer", ""),
+        })
+    
+    return questions
+
+
+@router.post("/benchmark/evaluate-single")
+async def evaluate_single_query(
+    query: str = Body(..., description="The query to evaluate"),
+    expected_answer: str = Body(..., description="Expected answer for scoring"),
+    query_id: Optional[str] = Body(None, description="Optional query ID"),
+    enable_tracing: bool = Body(True),
+    mode: Optional[str] = Body(None),
+):
+    """
+    Run benchmark evaluation for a single query.
+    
+    Executes the query through the agent, evaluates with TechnicalJudge,
+    and returns the result immediately.
+    
+    Args:
+        query: The search query to evaluate
+        expected_answer: Ground truth answer for scoring
+        query_id: Optional identifier for the query
+        enable_tracing: Save query trace for debugging
+        mode: Override VSM_MODE (default: use current setting)
+        
+    Returns:
+        Single benchmark record with score, answer, sources, etc.
+    """
+    settings = get_settings()
+    run_mode = mode or settings.vsm_mode
+    
+    result = await run_single_benchmark(
+        query=query,
+        expected_answer=expected_answer,
+        query_id=query_id,
+        mode=run_mode,
+        enable_tracing=enable_tracing,
+    )
+    
+    return result
 
 
 @router.post("/benchmark/evaluate")

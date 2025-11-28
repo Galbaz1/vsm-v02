@@ -1,3 +1,4 @@
+import warnings
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -5,7 +6,14 @@ from fastapi.staticfiles import StaticFiles
 
 from api.core.config import get_settings
 from api.endpoints import health, search, agentic
-from api.endpoints import benchmark
+from api.endpoints import benchmark, images, chat
+
+# Suppress noisy Pydantic warnings from DSPy/LiteLLM (harmless serialization noise)
+warnings.filterwarnings(
+    "ignore",
+    message="Pydantic serializer warnings",
+    category=UserWarning,
+)
 
 app = FastAPI(
     title="Manual Search API",
@@ -34,3 +42,5 @@ app.include_router(health.router)
 app.include_router(search.router)
 app.include_router(agentic.router, tags=["agentic"])
 app.include_router(benchmark.router, tags=["benchmark"])
+app.include_router(images.router, tags=["images"])
+app.include_router(chat.router, tags=["chat"])

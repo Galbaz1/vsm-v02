@@ -62,11 +62,24 @@ class FastVectorSearchTool(Tool):
         inputs: Dict[str, Any],
         **kwargs,
     ) -> AsyncGenerator[Any, None]:
-        """Execute fast vector search."""
+        """Execute fast vector search with deduplication."""
         from api.services.search import perform_search
         
         query = inputs.get("query", tree_data.user_prompt)
         limit = inputs.get("limit", 5)
+        
+        # Check if similar query was already executed (includes failed attempts)
+        if tree_data.environment.has_query_been_executed(
+            query,
+            similarity_threshold=0.85,
+            tasks_completed=tree_data.tasks_completed,
+        ):
+            yield Error(
+                message=f"Similar query already executed: '{query[:50]}...'",
+                recoverable=True,
+                suggestion="Try a different query or use text_response to answer from existing data",
+            )
+            return
         
         yield Status(f"Searching AssetManual for: {query[:50]}...")
         
@@ -92,13 +105,23 @@ class FastVectorSearchTool(Tool):
                 )
                 return
             
-            # Convert SearchHit objects to dicts
+            # Deduplicate against existing content in environment
+            existing_hashes = tree_data.environment.get_existing_content_hashes()
+            
+            # Convert SearchHit objects to dicts, filtering duplicates
             objects = []
+            duplicates_skipped = 0
             for hit in hits:
+                content_key = hit.content[:100] if hit.content else ""
+                if content_key in existing_hashes:
+                    duplicates_skipped += 1
+                    continue
+                    
                 obj = {
                     "content": hit.content,
                     "manual_name": hit.manual_name,
                     "page_number": hit.page_number,
+                    "score": hit.score,
                     "chunk_type": hit.chunk_type,
                     "section_title": hit.section_title,
                     "pdf_page_url": hit.pdf_page_url,
@@ -108,6 +131,18 @@ class FastVectorSearchTool(Tool):
                     obj["bbox"] = hit.bbox.model_dump()
                 objects.append(obj)
             
+            if not objects and duplicates_skipped > 0:
+                yield Error(
+                    message=f"All {duplicates_skipped} results were duplicates of existing data",
+                    recoverable=True,
+                    suggestion="Use text_response to answer from existing data",
+                )
+                return
+            
+            llm_msg = f"Found {len(objects)} text chunks matching '{query}' in {elapsed_ms}ms."
+            if duplicates_skipped > 0:
+                llm_msg += f" ({duplicates_skipped} duplicates filtered)"
+            
             yield Result(
                 objects=objects,
                 metadata={
@@ -116,9 +151,10 @@ class FastVectorSearchTool(Tool):
                     "time_ms": elapsed_ms,
                     "collection": "AssetManual",
                     "chunk_type_filter": None,  # Searches all types
+                    "duplicates_filtered": duplicates_skipped,
                 },
                 name="AssetManual",
-                llm_message=f"Found {len(objects)} text chunks matching '{query}' in {elapsed_ms}ms.",
+                llm_message=llm_msg,
             )
             
         except Exception as e:
@@ -199,12 +235,25 @@ class ColQwenSearchTool(Tool):
         inputs: Dict[str, Any],
         **kwargs,
     ) -> AsyncGenerator[Any, None]:
-        """Execute visual search."""
+        """Execute visual search with deduplication."""
         from api.core.providers import get_visual_search
         from api.core.config import get_settings
         
         query = inputs.get("query", tree_data.user_prompt)
         top_k = inputs.get("top_k", 3)
+        
+        # Check if similar query was already executed (includes failed attempts)
+        if tree_data.environment.has_query_been_executed(
+            query,
+            similarity_threshold=0.85,
+            tasks_completed=tree_data.tasks_completed,
+        ):
+            yield Error(
+                message=f"Similar visual query already executed: '{query[:50]}...'",
+                recoverable=True,
+                suggestion="Try a different query or use text_response to answer from existing data",
+            )
+            return
         
         yield Status(f"Searching visual content for: {query[:50]}...")
         
@@ -224,31 +273,51 @@ class ColQwenSearchTool(Tool):
                 )
                 return
             
-            # Enhance results with preview URLs
+            # Deduplicate against existing pages in environment
+            existing_pages = tree_data.environment.get_existing_page_numbers()
+            
+            # Enhance results with preview URLs, filtering duplicates
             settings = get_settings()
             objects = []
+            duplicates_skipped = 0
             for result in results:
-                # In local mode, result.image_path is a relative path (e.g. "static/previews/...")
-                # In cloud mode, images are blobs, so no URL unless we serve them via an endpoint
-                # For now, we'll assume local paths work, or cloud needs a dedicated image retrieval endpoint
-                
-                # TODO: Cloud mode image serving
+                if result.page_number in existing_pages:
+                    duplicates_skipped += 1
+                    continue
+                    
                 preview_url = None
                 if result.image_path:
                     preview_url = f"{settings.api_base_url}/{result.image_path}"
                 elif result.image_base64:
-                    # For cloud, we might return data URI or reference a blob endpoint
-                    # This is a placeholder for now
-                    preview_url = None 
+                    preview_url = f"data:image/png;base64,{result.image_base64}"
+                elif result.page_id:
+                    preview_url = f"{settings.api_base_url}/images/{result.page_id}"
                 
                 objects.append({
                     "page_id": result.page_id,  # Needed for cloud image retrieval
                     "page_number": result.page_number,
                     "asset_manual": result.asset_manual,
                     "score": result.score,
+                    "maxsim_score": result.score,
                     "image_path": result.image_path,
                     "preview_url": preview_url,
                 })
+            
+            if not objects and duplicates_skipped > 0:
+                yield Error(
+                    message=f"All {duplicates_skipped} visual results were duplicates of existing pages",
+                    recoverable=True,
+                    suggestion="Use text_response to answer from existing data",
+                )
+                return
+            
+            llm_msg = (
+                f"Found {len(objects)} relevant pages with visual content. "
+                f"Top result: page {objects[0]['page_number']} "
+                f"(score: {objects[0]['score']:.3f})"
+            )
+            if duplicates_skipped > 0:
+                llm_msg += f" ({duplicates_skipped} duplicate pages filtered)"
             
             yield Result(
                 objects=objects,
@@ -258,13 +327,10 @@ class ColQwenSearchTool(Tool):
                     "time_ms": elapsed_ms,
                     "collection": "PDFDocuments",
                     "retrieval_type": "visual_search",
+                    "duplicates_filtered": duplicates_skipped,
                 },
                 name="PDFDocuments",
-                llm_message=(
-                    f"Found {len(objects)} relevant pages with visual content. "
-                    f"Top result: page {objects[0]['page_number']} "
-                    f"(score: {objects[0]['score']:.3f})"
-                ),
+                llm_message=llm_msg,
             )
             
         except Exception as e:

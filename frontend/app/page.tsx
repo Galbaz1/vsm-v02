@@ -1,6 +1,8 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { SearchBar } from '@/components/SearchBar';
 import { ResultCard } from '@/components/ResultCard';
 import { PreviewPanel } from '@/components/PreviewPanel';
@@ -9,9 +11,11 @@ import { useAgenticSearch } from '@/lib/hooks/useAgenticSearch';
 import { useDebounce } from '@/lib/hooks/useDebounce';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import type { SearchHit } from '@/lib/types';
+import { fetchBenchmarkQuestions, runSingleBenchmark } from '@/lib/api';
+import type { SearchHit, SourceRef, BenchmarkQuestion, SingleBenchmarkResult } from '@/lib/types';
 
 export default function Home() {
+  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
   const [chunkType, setChunkType] = useState<string | undefined>(undefined);
   const [groupByPage, setGroupByPage] = useState(false);
@@ -19,8 +23,16 @@ export default function Home() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [isAgenticMode, setIsAgenticMode] = useState(false);
+  
+  // Benchmark suggested queries
+  const [benchmarkQuestions, setBenchmarkQuestions] = useState<BenchmarkQuestion[]>([]);
+  const [isBenchmarking, setIsBenchmarking] = useState(false);
+  const [benchmarkResult, setBenchmarkResult] = useState<SingleBenchmarkResult | null>(null);
+  const [activeBenchmarkQuery, setActiveBenchmarkQuery] = useState<BenchmarkQuestion | null>(null);
 
   const debouncedQuery = useDebounce(searchQuery, 400);
+  
+  // Hooks must be declared before they're used in effects
   const { data, isLoading, error } = useManualSearch(
     isAgenticMode ? '' : debouncedQuery, 
     10, 
@@ -30,6 +42,55 @@ export default function Home() {
   
   // Agentic search state
   const agentic = useAgenticSearch();
+  
+  // Load benchmark questions on mount
+  useEffect(() => {
+    fetchBenchmarkQuestions(5)
+      .then(setBenchmarkQuestions)
+      .catch(console.error);
+  }, []);
+  
+  // Restore state from sessionStorage on mount
+  useEffect(() => {
+    const savedState = sessionStorage.getItem('searchPageState');
+    if (savedState) {
+      try {
+        const state = JSON.parse(savedState);
+        if (state.searchQuery) setSearchQuery(state.searchQuery);
+        if (state.isAgenticMode) setIsAgenticMode(state.isAgenticMode);
+        if (state.benchmarkResult) setBenchmarkResult(state.benchmarkResult);
+        if (state.activeBenchmarkQuery) setActiveBenchmarkQuery(state.activeBenchmarkQuery);
+        // Restore agentic results if available
+        if (state.agenticState && state.agenticState.response) {
+          agentic.restore(state.agenticState);
+        }
+      } catch (e) {
+        console.error('Failed to restore state:', e);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  
+  // Save state to sessionStorage when key values change
+  useEffect(() => {
+    if (searchQuery || isAgenticMode || benchmarkResult || agentic.response) {
+      const state = {
+        searchQuery,
+        isAgenticMode,
+        benchmarkResult,
+        activeBenchmarkQuery,
+        agenticState: agentic.isComplete ? {
+          response: agentic.response,
+          sources: agentic.sources,
+          textResults: agentic.textResults,
+          visualResults: agentic.visualResults,
+          visualInterpretations: agentic.visualInterpretations,
+          decisions: agentic.decisions,
+        } : null,
+      };
+      sessionStorage.setItem('searchPageState', JSON.stringify(state));
+    }
+  }, [searchQuery, isAgenticMode, benchmarkResult, activeBenchmarkQuery, agentic.isComplete, agentic.response, agentic.sources, agentic.textResults, agentic.visualResults, agentic.visualInterpretations, agentic.decisions]);
 
   const handleSearch = (query: string) => {
     setSearchQuery(query);
@@ -51,6 +112,43 @@ export default function Home() {
     setIsAgenticMode(enabled);
     if (!enabled) {
       agentic.reset();
+    }
+  };
+  
+  // Handle clicking a benchmark suggested query
+  const handleBenchmarkQueryClick = async (question: BenchmarkQuestion) => {
+    // Enable agentic mode and set query
+    setIsAgenticMode(true);
+    setSearchQuery(question.query);
+    setActiveBenchmarkQuery(question);
+    setIsBenchmarking(true);
+    setBenchmarkResult(null);
+    
+    // Start agentic search
+    agentic.search(question.query);
+    
+    // Run benchmark in parallel
+    try {
+      const result = await runSingleBenchmark(
+        question.query,
+        question.expected_answer,
+        question.id,
+      );
+      setBenchmarkResult(result);
+      
+      // Store result in sessionStorage for benchmark dashboard
+      sessionStorage.setItem('lastBenchmarkResult', JSON.stringify(result));
+    } catch (err) {
+      console.error('Benchmark failed:', err);
+    } finally {
+      setIsBenchmarking(false);
+    }
+  };
+  
+  // Navigate to benchmark dashboard with result
+  const viewBenchmarkResult = () => {
+    if (benchmarkResult) {
+      router.push(`/benchmark?highlight=${benchmarkResult.id}`);
     }
   };
 
@@ -123,6 +221,18 @@ export default function Home() {
               </p>
             </div>
             <div className="flex items-center gap-3">
+              <Link
+                href="/chat"
+                className="text-sm font-medium text-indigo-400 hover:text-indigo-300 transition-colors"
+              >
+                💬 Chat
+              </Link>
+              <Link
+                href="/benchmark"
+                className="text-sm font-medium underline underline-offset-4 hover:text-foreground"
+              >
+                Benchmark
+              </Link>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
@@ -154,11 +264,23 @@ export default function Home() {
 
         {/* Agentic Mode UI */}
         {isAgenticMode && (
-          <AgenticResults 
-            agentic={agentic} 
-            onPreview={handlePreview}
-            searchQuery={searchQuery}
-          />
+          <>
+            {/* Benchmark Progress/Result Panel */}
+            {(isBenchmarking || benchmarkResult) && activeBenchmarkQuery && (
+              <BenchmarkResultPanel
+                isLoading={isBenchmarking}
+                result={benchmarkResult}
+                expectedAnswer={activeBenchmarkQuery.expected_answer}
+                onViewDetails={viewBenchmarkResult}
+              />
+            )}
+            
+            <AgenticResults 
+              agentic={agentic} 
+              onPreview={handlePreview}
+              searchQuery={searchQuery}
+            />
+          </>
         )}
 
         {/* Regular Search Mode UI */}
@@ -269,6 +391,36 @@ export default function Home() {
                 <p className="text-sm text-muted-foreground mt-2">
                   Search for procedures, specifications, or any content from the manuals
                 </p>
+                
+                {/* Suggested Benchmark Queries */}
+                {benchmarkQuestions.length > 0 && (
+                  <div className="mt-8 max-w-3xl mx-auto text-left">
+                    <p className="text-sm font-medium text-muted-foreground mb-3">
+                      Try a benchmark query:
+                    </p>
+                    <div className="space-y-2">
+                      {benchmarkQuestions.map((q) => (
+                        <button
+                          key={q.id}
+                          onClick={() => handleBenchmarkQueryClick(q)}
+                          className="w-full text-left p-3 rounded-lg border hover:border-primary hover:bg-muted/50 transition-colors group"
+                        >
+                          <div className="flex items-start gap-2">
+                            <Badge variant="outline" className="shrink-0 text-xs">
+                              {q.category}
+                            </Badge>
+                            <span className="text-sm text-foreground group-hover:text-primary line-clamp-2">
+                              {q.query}
+                            </span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-3">
+                      Clicking runs the query and evaluates against expected answer
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </>
@@ -293,6 +445,40 @@ interface AgenticResultsProps {
 }
 
 function AgenticResults({ agentic, onPreview, searchQuery }: AgenticResultsProps) {
+  const handleSourceClick = (source: SourceRef, index: number) => {
+    const pageNumber = typeof source.page === 'string' ? parseInt(source.page, 10) : source.page;
+    if (Number.isNaN(pageNumber)) return;
+    
+    const textMatch = agentic.textResults.find(
+      (t) => t.page_number === pageNumber && (!source.manual || t.manual_name === source.manual)
+    );
+    const visualMatch = agentic.visualResults.find(
+      (v) => v.page_number === pageNumber && (!source.manual || v.asset_manual === source.manual)
+    );
+    
+    const manualName = source.manual || textMatch?.manual_name || visualMatch?.asset_manual || 'Manual';
+    const pageImageUrl = source.preview_url || visualMatch?.preview_url || textMatch?.page_image_url || null;
+    const pdfPageUrl = source.pdf_page_url || textMatch?.pdf_page_url || '';
+    const content = textMatch?.content || agentic.response || 'Source from agentic search.';
+    const score = source.score ?? textMatch?.score ?? visualMatch?.maxsim_score ?? visualMatch?.score ?? null;
+    
+    const hit: SearchHit = {
+      anchor_id: `source-${manualName}-${pageNumber}-${index}`,
+      manual_name: manualName,
+      content,
+      page_number: pageNumber ?? null,
+      bbox: textMatch?.bbox || null,
+      pdf_page_url: pdfPageUrl || '',
+      page_image_url: pageImageUrl || null,
+      chunk_type: textMatch?.chunk_type,
+      section_title: textMatch?.section_title,
+      content_hash: null,
+      score,
+    };
+    
+    onPreview(hit);
+  };
+  
   return (
     <div className="space-y-6">
       {/* Status Bar */}
@@ -351,8 +537,23 @@ function AgenticResults({ agentic, onPreview, searchQuery }: AgenticResultsProps
               <p className="text-xs text-muted-foreground mb-2">Sources:</p>
               <div className="flex flex-wrap gap-2">
                 {agentic.sources.map((source, i) => (
-                  <Badge key={i} variant="outline" className="text-xs">
-                    {source.manual} - Page {source.page}
+                  <Badge 
+                    key={`${source.manual}-${source.page}-${i}`} 
+                    variant="outline" 
+                    className="text-xs cursor-pointer hover:bg-emerald-50"
+                    onClick={() => handleSourceClick(source, i)}
+                  >
+                    {source.manual || 'Manual'} - Page {source.page}
+                    {source.type && (
+                      <span className="ml-1 text-[10px] uppercase text-muted-foreground">
+                        • {source.type}
+                      </span>
+                    )}
+                    {typeof source.score === 'number' && (
+                      <span className="ml-1 text-[10px] text-muted-foreground">
+                        • {source.score.toFixed(2)}
+                      </span>
+                    )}
                   </Badge>
                 ))}
               </div>
@@ -385,7 +586,10 @@ function AgenticResults({ agentic, onPreview, searchQuery }: AgenticResultsProps
                   <p className="text-sm font-medium">Page {result.page_number}</p>
                   <p className="text-xs text-muted-foreground">{result.asset_manual}</p>
                   <p className="text-xs text-muted-foreground">
-                    Score: {result.maxsim_score?.toFixed(3)}
+                    {(() => {
+                      const score = typeof result.maxsim_score === 'number' ? result.maxsim_score : result.score;
+                      return `Score: ${typeof score === 'number' ? score.toFixed(3) : '—'}`;
+                    })()}
                   </p>
                 </div>
               </div>
@@ -435,10 +639,11 @@ function AgenticResults({ agentic, onPreview, searchQuery }: AgenticResultsProps
                 content: result.content,
                 page_number: result.page_number,
                 bbox: result.bbox || null,
-                pdf_page_url: '',
+                pdf_page_url: result.pdf_page_url || '',
                 page_image_url: result.page_image_url || null,
                 chunk_type: result.chunk_type,
                 section_title: result.section_title,
+                score: result.score ?? null,
               };
               return (
                 <ResultCard
@@ -468,6 +673,92 @@ function AgenticResults({ agentic, onPreview, searchQuery }: AgenticResultsProps
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+
+// Benchmark Result Panel Component
+interface BenchmarkResultPanelProps {
+  isLoading: boolean;
+  result: SingleBenchmarkResult | null;
+  expectedAnswer: string;
+  onViewDetails: () => void;
+}
+
+// Static class mappings for Tailwind JIT (dynamic interpolation doesn't work)
+const scoreStyles = {
+  emerald: {
+    container: 'bg-emerald-50/50 border-emerald-200',
+    dot: 'bg-emerald-500',
+    text: 'text-emerald-600',
+  },
+  amber: {
+    container: 'bg-amber-50/50 border-amber-200',
+    dot: 'bg-amber-500',
+    text: 'text-amber-600',
+  },
+  red: {
+    container: 'bg-red-50/50 border-red-200',
+    dot: 'bg-red-500',
+    text: 'text-red-600',
+  },
+} as const;
+
+function BenchmarkResultPanel({ isLoading, result, expectedAnswer, onViewDetails }: BenchmarkResultPanelProps) {
+  if (isLoading) {
+    return (
+      <div className="mb-6 p-4 border rounded-lg bg-blue-50/50 border-blue-200">
+        <div className="flex items-center gap-3">
+          <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          <span className="text-sm font-medium text-blue-700">Running benchmark evaluation...</span>
+        </div>
+      </div>
+    );
+  }
+  
+  if (!result) return null;
+  
+  const scoreKey = result.judge_score >= 0.7 ? 'emerald' : result.judge_score >= 0.4 ? 'amber' : 'red';
+  const styles = scoreStyles[scoreKey];
+  const scorePercent = Math.round(result.judge_score * 100);
+  
+  return (
+    <div className={`mb-6 p-4 border rounded-lg ${styles.container}`}>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-medium flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${styles.dot}`} />
+          Benchmark Result
+        </h3>
+        <div className="flex items-center gap-3">
+          <span className={`text-lg font-bold ${styles.text}`}>
+            {scorePercent}%
+          </span>
+          <button
+            onClick={onViewDetails}
+            className="text-xs text-muted-foreground hover:text-foreground underline"
+          >
+            View in Dashboard
+          </button>
+        </div>
+      </div>
+      
+      <div className="grid grid-cols-2 gap-4 text-sm">
+        <div>
+          <p className="text-xs text-muted-foreground mb-1">Expected Answer</p>
+          <p className="text-foreground line-clamp-3">{expectedAnswer}</p>
+        </div>
+        <div>
+          <p className="text-xs text-muted-foreground mb-1">Judge Rationale</p>
+          <p className="text-foreground line-clamp-3">{result.judge_rationale}</p>
+        </div>
+      </div>
+      
+      <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
+        <span>Latency: {Math.round(result.latency_ms)}ms</span>
+        <span>Iterations: {result.iterations}</span>
+        <span>Tools: {result.tools_used.join(' → ')}</span>
+      </div>
     </div>
   );
 }

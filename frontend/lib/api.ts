@@ -1,8 +1,12 @@
 import axios from 'axios';
-import type { 
+import type {
   SearchResponse, 
   SearchQueryParams, 
   AgenticStreamEvent,
+  BenchmarkListItem,
+  BenchmarkRun,
+  BenchmarkQuestion,
+  SingleBenchmarkResult,
 } from './types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8001';
@@ -114,3 +118,130 @@ export function streamAgenticSearch(
   return controller;
 }
 
+export async function listBenchmarkReports(limit: number = 20): Promise<BenchmarkListItem[]> {
+  const response = await apiClient.get<BenchmarkListItem[]>('/benchmark/reports', {
+    params: { limit },
+  });
+  return response.data;
+}
+
+export async function fetchBenchmarkReport(filename: string): Promise<BenchmarkRun> {
+  const response = await apiClient.get<BenchmarkRun>(`/benchmark/reports/${filename}`);
+  return response.data;
+}
+
+export async function fetchBenchmarkQuestions(limit: number = 5): Promise<BenchmarkQuestion[]> {
+  const response = await apiClient.get<BenchmarkQuestion[]>('/benchmark/questions', {
+    params: { limit },
+  });
+  return response.data;
+}
+
+export async function runSingleBenchmark(
+  query: string,
+  expectedAnswer: string,
+  queryId?: string,
+): Promise<SingleBenchmarkResult> {
+  const response = await apiClient.post<SingleBenchmarkResult>('/benchmark/evaluate-single', {
+    query,
+    expected_answer: expectedAnswer,
+    query_id: queryId,
+    enable_tracing: true,
+  });
+  return response.data;
+}
+
+// Chat API
+export interface ChatSession {
+  session_id: string;
+  message_count: number;
+  last_query?: string;
+  has_data: boolean;
+}
+
+export interface ChatSessionDetail {
+  session_id: string;
+  conversation_history: { role: string; content: string }[];
+  environment_summary: string;
+  tasks_completed_count: number;
+}
+
+export function streamChat(
+  message: string,
+  sessionId: string | null,
+  onEvent: (event: AgenticStreamEvent & { type: 'session'; payload: { is_new: boolean; message_count: number }; session_id: string }) => void,
+  onError: (error: Error) => void,
+  onComplete: () => void,
+): AbortController {
+  const controller = new AbortController();
+  
+  const fetchStream = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, session_id: sessionId }),
+        signal: controller.signal,
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Chat failed: ${response.status}`);
+      }
+      
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No response body');
+      
+      const decoder = new TextDecoder();
+      let buffer = '';
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              const event = JSON.parse(line);
+              onEvent(event);
+            } catch (e) {
+              console.warn('Failed to parse chat event:', line);
+            }
+          }
+        }
+      }
+      
+      onComplete();
+    } catch (error) {
+      if ((error as Error).name !== 'AbortError') {
+        onError(error as Error);
+      }
+    }
+  };
+  
+  fetchStream();
+  return controller;
+}
+
+export async function listChatSessions(): Promise<{ sessions: ChatSession[] }> {
+  const response = await apiClient.get<{ sessions: ChatSession[] }>('/chat/sessions');
+  return response.data;
+}
+
+export async function getChatSession(sessionId: string): Promise<ChatSessionDetail> {
+  const response = await apiClient.get<ChatSessionDetail>(`/chat/sessions/${sessionId}`);
+  return response.data;
+}
+
+export async function deleteChatSession(sessionId: string): Promise<{ deleted: boolean }> {
+  const response = await apiClient.delete<{ deleted: boolean }>(`/chat/sessions/${sessionId}`);
+  return response.data;
+}
+
+export async function createChatSession(): Promise<{ session_id: string }> {
+  const response = await apiClient.post<{ session_id: string }>('/chat/sessions');
+  return response.data;
+}

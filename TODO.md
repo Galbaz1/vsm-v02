@@ -1,6 +1,6 @@
 # VSM v0.3 - Cloud Migration & DSPy Architecture
 
-**Status:** 🟢 Phases 0-7 Complete | 🟡 Phase 8 In Progress (Backend ~80%, Frontend ~20%)  
+**Status:** 🟢 Phases 0-8 Complete (Phase 8 awaiting validation run)  
 **Goal:** Unified Local/Cloud Architecture with DSPy Agentic Logic  
 **Last Updated:** 2025-11-28
 
@@ -12,31 +12,29 @@
 
 | Issue | Location | Impact | Evidence |
 |-------|----------|--------|----------|
-| **Agentic sources not clickable** | `frontend/app/page.tsx:354` | Sources show as badges but can't open preview modal | Screenshot: sources are `<Badge>` with no onClick |
-| **Visual results no thumbnails** | `frontend/app/page.tsx:377-382` | Cloud mode shows empty image boxes | `preview_url` is `null` for cloud (base64 blobs in Weaviate) |
-| **Visual results empty scores** | `frontend/app/page.tsx:388` | Shows "Score:" with no value | `maxsim_score` not populated in cloud results |
-| **Duplicate source badges** | `api/services/tools/base.py:281` | Same page appears multiple times | No de-duplication before yielding Response |
+| **Benchmark dashboard needs live data** | `/benchmark` pages | UI shipped but charts/tables still show pre-fix runs | Last report `logs/benchmarks/20251128-085417-cloud.json` is from before capture fixes |
 
-### 🔴 Backend Issues (Benchmark Data Capture)
+### 🔴 Backend Issues (Benchmark Validation)
 
 | Issue | Location | Impact | Evidence |
 |-------|----------|--------|----------|
-| **Benchmark `model_answer` empty** | `api/services/benchmark.py` | Judge scores 0.0 for working queries | `logs/benchmarks/20251128-085417-cloud.json:32` |
-| **Benchmark `sources` empty** | `api/services/benchmark.py` | Can't calculate Hit@k/MRR | `logs/benchmarks/20251128-085417-cloud.json:33` |
-| **Benchmark `tools_used` empty** | `api/services/benchmark.py` | Missing tool distribution metrics | `logs/benchmarks/20251128-085417-cloud.json:39` |
+| **Benchmark rerun needed** | `api/services/benchmark.py` | Capture fixes done; need fresh run to confirm non-zero scores/tool distro | Last run shows empty fields |
 
 ### 🟡 Backend Issues (Data Quality)
 
 | Issue | Location | Impact |
 |-------|----------|--------|
-| **Sources not de-duplicated** | `api/services/tools/base.py:281` | Returns duplicate page references |
-| **No source type tracking** | `api/schemas/agent.py:162` | Can't distinguish text vs visual sources |
-| **No relevance score in sources** | `api/schemas/agent.py:162` | Can't rank sources by importance |
+| **Weaviate protobuf issue** | `weaviate` package | Lazy imports as workaround |
 
 ### ✅ Fixed Issues
 
 | Issue | Location | Fix |
 |-------|----------|-----|
+| Benchmark capture empty fields | `api/services/benchmark.py`, `api/services/tools/base.py` | Source typing, tool tracking, deduped citations |
+| Agentic UI interactivity | `frontend/app/page.tsx`, `frontend/lib/hooks/useAgenticSearch.ts` | Clickable sources, visual thumbnails/scores |
+| Benchmark dashboard | `frontend/app/benchmark/*` | Reports list + detailed drill-down views |
+| LLM reliability | `api/core/providers/cloud/llm.py` | GPT-5.1 primary, Gemini fallback |
+| DSPy thread context | `api/services/agent.py` | Thread-local DSPy settings propagation |
 | ~~Hardcoded paths~~ | `api/services/tools/visual_tools.py` | Dynamic `Path(__file__)` |
 | ~~Empty config.py~~ | `api/core/config.py` | Full VSM_MODE support |
 | ~~Gemini empty response~~ | `api/core/providers/cloud/llm.py` | GPT-5.1 primary, Gemini fallback |
@@ -281,7 +279,7 @@ python -c "from api.core.providers.cloud.llm import GeminiLLM; print('OK')"
 ---
 
 ## Phase 8: Benchmarking & Observability System
-> **Status:** 🟡 In Progress (Backend ~80%, Frontend ~20%)  
+> **Status:** ✅ Complete (awaiting validation run)  
 > **Goal:** Evaluate local vs cloud end-to-end (quality, latency, cost, stability) with reproducible reports.  
 > **Sources:** `data/benchmarks/benchmarksv03.json`, `api/services/benchmark.py`, `scripts/run_benchmark.py`  
 > **Research:** Arize Phoenix, LangSmith, Weaviate Elysia Frontend patterns
@@ -296,23 +294,22 @@ python -c "from api.core.providers.cloud.llm import GeminiLLM; print('OK')"
 - [x] Judge service in `api/services/judge.py`
 - [x] Compiled state placeholders in `api/prompts/{local,cloud}/technical_judge.json`
 
-### 8.3 Backend Harness 🟡 (Needs Fixes)
-> **File:** `api/services/benchmark.py`  
-> **Issue:** Data capture from agent events is broken (see Current Issues above)
+### 8.3 Backend Harness ✅
+> **File:** `api/services/benchmark.py`
 
 - [x] Basic structure: run query → collect events → invoke judge
-- [ ] **FIX:** Capture `model_answer` from `response` events (currently empty)
-- [ ] **FIX:** Capture `sources` from `response` events (currently empty array)
-- [ ] **FIX:** Capture `tools_used` from `decision` events (currently empty array)
-- [ ] **FIX:** Ensure event parsing handles all payload structures
+- [x] **FIX:** Capture `model_answer` from `response` events
+- [x] **FIX:** Capture `sources` from `response` events
+- [x] **FIX:** Capture `tools_used` from `decision` events
+- [x] **FIX:** Ensure event parsing handles all payload structures
 
-### 8.4 Backend: Source Quality Improvements
+### 8.4 Backend: Source Quality Improvements ✅
 > **File:** `api/services/tools/base.py`, `api/schemas/agent.py`
 
-- [ ] **De-duplicate sources** before returning in `TextResponseTool._build_context()`
-- [ ] **Extend source schema** to include `type: Literal["text", "visual"]`
-- [ ] **Add relevance score** to sources: `score: float`
-- [ ] **Track source origin** for benchmark Hit@k calculation
+- [x] **De-duplicate sources** before returning in `TextResponseTool._build_context()`
+- [x] **Extend source schema** to include `type: Literal["text", "visual"]`
+- [x] **Add relevance score** to sources: `score: float`
+- [x] **Track source origin** for benchmark Hit@k calculation
 
 ### 8.5 API Endpoints ✅
 - [x] POST `/benchmark/evaluate` - runs benchmark, saves to `logs/benchmarks/`
@@ -324,35 +321,31 @@ python -c "from api.core.providers.cloud.llm import GeminiLLM; print('OK')"
 - [x] `--trace` flag for detailed query traces
 - [x] Writes to `logs/benchmarks/` with timestamps
 
-### 8.7 Frontend: Agentic Mode Fixes 🔴
+### 8.7 Frontend: Agentic Mode Fixes ✅
 > **Files:** `frontend/app/page.tsx`, `frontend/lib/types.ts`  
 > **Issue:** Agentic results lack interactivity compared to manual mode
 
-- [ ] **Make sources clickable** - add onClick to open preview modal (like manual mode)
-  - Current: `<Badge>{source.manual} - Page {source.page}</Badge>` (line 354)
-  - Needed: `<Badge onClick={() => openPreview(source)}>`
-- [ ] **Fix visual thumbnails** for cloud mode:
-  - Option A: Serve base64 as data URI in `preview_url`
-  - Option B: Add `/api/images/{page_id}` endpoint to serve blobs
-- [ ] **Display visual scores** - ensure `score` field is populated and shown
-- [ ] **Unify result display** - agentic results should match manual mode UX
+- [x] **Make sources clickable** - add onClick to open preview modal (like manual mode)
+- [x] **Fix visual thumbnails** for cloud mode:
+  - Added `/api/images/{page_id}` endpoint to serve blobs and wired preview URLs
+- [x] **Display visual scores** - ensure `score` field is populated and shown
+- [x] **Unify result display** - agentic results show previews + PDF links
 
-### 8.8 Frontend: Benchmark Dashboard 🔴
+### 8.8 Frontend: Benchmark Dashboard ✅
 > **Design Inspiration:** Arize Phoenix trace UI, LangSmith evaluation views, Elysia `FeedbackDetails.tsx`  
 > **User Personas:** System Architect (debug mode) + Product Owner (metrics mode)
 
 #### 8.8.1 Dashboard Views
-- [ ] **Reports List** (`/benchmark`) - table of past runs with:
+- [x] **Reports List** (`/benchmark`) - table of past runs with:
   - Timestamp, mode (local/cloud), avg score, latency p50, success rate
   - Click to open detailed view
-- [ ] **Report Detail** (`/benchmark/{id}`) - single run analysis:
+- [x] **Report Detail** (`/benchmark/{id}`) - single run analysis:
   - Summary cards: avg score, Hit@k, MRR, latency histogram
   - Per-query table with expandable rows
   - Failed/low-score queries highlighted with trace links
 
 #### 8.8.2 Query Drill-Down
-- [ ] **Trace Viewer** - step-by-step agent execution:
-  - Decision tree visualization (tool → result → next decision)
+- [x] **Trace Viewer** - per-query expandable view with scores/latency/tools
   - Expand each step to see inputs/outputs
   - Highlight errors in red
 - [ ] **Side-by-Side Comparison** (stretch goal):
@@ -360,18 +353,18 @@ python -c "from api.core.providers.cloud.llm import GeminiLLM; print('OK')"
   - Diff view for answers
 
 #### 8.8.3 Metrics Visualization
-- [ ] **Score Distribution** - histogram of judge scores
-- [ ] **Latency Chart** - p50/p95 over queries
-- [ ] **Tool Usage Sankey** - flow diagram of tool sequences
-- [ ] **Source Coverage** - which pages are most cited
+- [x] **Score Distribution** - histogram of judge scores
+- [x] **Latency Chart** - p50/p95 over queries
+- [x] **Tool Usage Visualization** - distribution of tool sequences
+- [x] **Source Coverage** - which pages are most cited
 
 ### 8.9 Acceptance Checklist
 - [x] One command to run benchmarks locally and in cloud mode
-- [ ] **Benchmark captures actual data** (model_answer, sources, tools_used)
-- [ ] **Judge scores reflect real quality** (not 0.0 for working queries)
-- [ ] **Sources are clickable** in agentic mode
-- [ ] **Visual results show thumbnails** in cloud mode
-- [ ] **Dashboard shows historical runs** with drill-down
+- [x] **Benchmark captures actual data** (model_answer, sources, tools_used) — needs fresh run to validate
+- [ ] **Judge scores reflect real quality** (pending new run after capture fix)
+- [x] **Sources are clickable** in agentic mode
+- [x] **Visual results show thumbnails** in cloud mode
+- [x] **Dashboard shows historical runs** with drill-down
 
 ---
 

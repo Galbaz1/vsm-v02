@@ -190,6 +190,82 @@ class Environment:
                     all_objects.extend(entry.get("objects", []))
         return all_objects
     
+    def get_existing_page_numbers(self) -> set:
+        """Get all page numbers already in the environment (for deduplication)."""
+        pages = set()
+        for tool_name in self.environment:
+            for name in self.environment[tool_name]:
+                for entry in self.environment[tool_name][name]:
+                    for obj in entry.get("objects", []):
+                        if "page_number" in obj:
+                            pages.add(obj["page_number"])
+        return pages
+    
+    def get_existing_content_hashes(self) -> set:
+        """Get content hashes already in environment (for text deduplication)."""
+        hashes = set()
+        for tool_name in self.environment:
+            for name in self.environment[tool_name]:
+                for entry in self.environment[tool_name][name]:
+                    for obj in entry.get("objects", []):
+                        if "content" in obj:
+                            # Use first 100 chars as hash key
+                            content_key = obj["content"][:100] if obj["content"] else ""
+                            hashes.add(content_key)
+        return hashes
+    
+    def has_query_been_executed(
+        self,
+        query: str,
+        similarity_threshold: float = 0.8,
+        tasks_completed: Optional[List[Dict]] = None,
+    ) -> bool:
+        """
+        Check if a similar query has already been executed.
+        
+        Uses simple word overlap for similarity. Checks BOTH:
+        1. environment metadata (successful results)
+        2. tasks_completed (all attempts including failures)
+        
+        Args:
+            query: The query to check
+            similarity_threshold: Minimum word overlap ratio (0-1)
+            tasks_completed: Optional list from TreeData.tasks_completed
+        
+        Returns:
+            True if a similar query was already executed
+        """
+        query_words = set(query.lower().split())
+        
+        def is_similar(prev_query: str) -> bool:
+            if not prev_query:
+                return False
+            prev_words = set(prev_query.lower().split())
+            if query_words and prev_words:
+                overlap = len(query_words & prev_words)
+                similarity = overlap / max(len(query_words), len(prev_words))
+                return similarity >= similarity_threshold
+            return False
+        
+        # Check environment metadata (successful results)
+        for tool_name in self.environment:
+            for name in self.environment[tool_name]:
+                for entry in self.environment[tool_name][name]:
+                    metadata = entry.get("metadata", {})
+                    if is_similar(metadata.get("query", "")):
+                        return True
+        
+        # Check tasks_completed (includes failed attempts)
+        if tasks_completed:
+            for task_prompt in tasks_completed:
+                for task in task_prompt.get("task", []):
+                    inputs = task.get("inputs", {})
+                    if isinstance(inputs, dict):
+                        if is_similar(inputs.get("query", "")):
+                            return True
+        
+        return False
+    
     def estimate_tokens(self) -> int:
         """Estimate token count of environment content (rough: chars / 4)."""
         return len(json.dumps(self.environment)) // 4

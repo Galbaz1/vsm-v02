@@ -12,6 +12,7 @@ class SearchHit(BaseModel):
     manual_name: str
     content: str
     page_number: Optional[int] = None
+    score: Optional[float] = None
     bbox: Optional[BoundingBox] = None
     pdf_page_url: str
     page_image_url: Optional[str] = None

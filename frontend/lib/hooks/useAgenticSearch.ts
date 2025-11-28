@@ -5,6 +5,7 @@ import { streamAgenticSearch } from '../api';
 import type { 
   AgenticSearchState, 
   AgenticStreamEvent,
+  SourceRef,
   TextChunkResult,
   VisualPageResult,
   VisualInterpretationResult,
@@ -78,23 +79,25 @@ export function useAgenticSearch() {
             };
             
             // Route results based on source name
-            if (payload.name === 'AssetManual' || payload.name === 'hybrid_search') {
-              // Text search results
-              const textChunks = payload.objects
-                .filter((obj) => 'content' in obj)
-                .map((obj) => ({
-                  content: obj.content as string,
-                  manual_name: (obj.manual_name || obj.asset_manual || 'Manual') as string,
-                  page_number: obj.page_number as number,
-                  chunk_type: obj.chunk_type as string | undefined,
-                  section_title: obj.section_title as string | undefined,
-                  bbox: obj.bbox as TextChunkResult['bbox'],
-                  page_image_url: obj.page_image_url as string | undefined,
-                }));
-              next.textResults = [...prev.textResults, ...textChunks];
-              
-              // Handle hybrid search visual pages
-              if (payload.name === 'hybrid_search' && payload.objects[0]) {
+              if (payload.name === 'AssetManual' || payload.name === 'hybrid_search') {
+                // Text search results
+                const textChunks = payload.objects
+                  .filter((obj) => 'content' in obj)
+                  .map((obj) => ({
+                    content: obj.content as string,
+                    manual_name: (obj.manual_name || obj.asset_manual || 'Manual') as string,
+                    page_number: obj.page_number as number,
+                    score: (obj.score as number) ?? null,
+                    chunk_type: obj.chunk_type as string | undefined,
+                    section_title: obj.section_title as string | undefined,
+                    bbox: obj.bbox as TextChunkResult['bbox'],
+                    page_image_url: obj.page_image_url as string | undefined,
+                    pdf_page_url: obj.pdf_page_url as string | undefined,
+                  }));
+                next.textResults = [...prev.textResults, ...textChunks];
+                
+                // Handle hybrid search visual pages
+                if (payload.name === 'hybrid_search' && payload.objects[0]) {
                 const hybrid = payload.objects[0] as {
                   text_chunks?: unknown[];
                   visual_pages?: unknown[];
@@ -103,9 +106,10 @@ export function useAgenticSearch() {
                   const visualPages = (hybrid.visual_pages as Record<string, unknown>[]).map((obj) => ({
                     page_number: obj.page_number as number,
                     asset_manual: (obj.asset_manual || 'Manual') as string,
-                    maxsim_score: obj.maxsim_score as number,
+                    maxsim_score: (obj.maxsim_score as number) ?? (obj.score as number),
                     image_path: obj.image_path as string,
                     preview_url: obj.preview_url as string | undefined,
+                    score: (obj.score as number) ?? undefined,
                   }));
                   next.visualResults = [...prev.visualResults, ...visualPages];
                 }
@@ -115,9 +119,10 @@ export function useAgenticSearch() {
               const visualPages = payload.objects.map((obj) => ({
                 page_number: obj.page_number as number,
                 asset_manual: (obj.asset_manual || 'Manual') as string,
-                maxsim_score: obj.maxsim_score as number,
+                maxsim_score: (obj.maxsim_score as number) ?? (obj.score as number),
                 image_path: obj.image_path as string,
                 preview_url: obj.preview_url as string | undefined,
+                score: (obj.score as number) ?? undefined,
               }));
               next.visualResults = [...prev.visualResults, ...visualPages];
             } else if (payload.name === 'visual_interpretations') {
@@ -137,7 +142,7 @@ export function useAgenticSearch() {
           case 'response': {
             const payload = event.payload as {
               text: string;
-              sources?: { page: number; manual: string }[];
+              sources?: SourceRef[];
             };
             next.response = payload.text;
             next.sources = payload.sources || [];
@@ -212,11 +217,25 @@ export function useAgenticSearch() {
     setState(initialState);
   }, []);
   
+  // Restore state from a saved snapshot (for persistence)
+  const restore = useCallback((savedState: Partial<AgenticSearchState>) => {
+    setState({
+      ...initialState,
+      ...savedState,
+      isComplete: true,
+      isLoading: false,
+    });
+  }, []);
+  
+  // Get current state for saving
+  const getState = useCallback((): AgenticSearchState => state, [state]);
+  
   return {
     ...state,
     search,
     cancel,
     reset,
+    restore,
+    getState,
   };
 }
-

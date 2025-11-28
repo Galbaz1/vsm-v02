@@ -255,17 +255,60 @@ Answer:"""
         return not tree_data.environment.is_empty() or tree_data.num_iterations > 0
     
     def _build_context(self, tree_data: "TreeData", max_chars: int = 8000) -> Tuple[str, List[Dict]]:
-        """Build context string from environment data."""
+        """Build context string and a deduplicated, typed source list from environment data."""
         all_objects = tree_data.environment.get_all_objects()
         
         context_parts = []
-        sources = []
         total_chars = 0
+        
+        # Track sources by (manual, page, type) while keeping insertion order
+        sources_map: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+        order_counter = 0
+        
+        def add_source(
+            manual: Optional[str],
+            page: Optional[int],
+            source_type: str,
+            score: Optional[float],
+            preview_url: Optional[str],
+            pdf_page_url: Optional[str],
+            origin: Optional[str],
+        ) -> None:
+            nonlocal order_counter
+            if page is None:
+                return
+            
+            manual_name = manual or "Manual"
+            key = (manual_name, str(page), source_type)
+            if key not in sources_map:
+                sources_map[key] = {
+                    "manual": manual_name,
+                    "page": page,
+                    "type": source_type,
+                    "order": order_counter,
+                }
+                order_counter += 1
+            
+            entry = sources_map[key]
+            if score is not None:
+                if entry.get("score") is None or score > entry.get("score", float("-inf")):
+                    entry["score"] = score
+            if preview_url and not entry.get("preview_url"):
+                entry["preview_url"] = preview_url
+            if pdf_page_url and not entry.get("pdf_page_url"):
+                entry["pdf_page_url"] = pdf_page_url
+            if origin and not entry.get("origin"):
+                entry["origin"] = origin
+        
+        def resolve_origin(ref_id: Optional[str]) -> Optional[str]:
+            if not ref_id:
+                return None
+            parts = ref_id.split("_")
+            return "_".join(parts[:-3]) if len(parts) >= 4 else None
         
         # Flatten hybrid search results if present
         flattened_objects = []
         for obj in all_objects:
-            # Handle HybridSearchTool nested structure
             if "text_chunks" in obj or "visual_pages" in obj:
                 flattened_objects.extend(obj.get("text_chunks", []))
                 flattened_objects.extend(obj.get("visual_pages", []))
@@ -273,26 +316,37 @@ Answer:"""
                 flattened_objects.append(obj)
         
         for obj in flattened_objects:
-            # Build source reference
-            page = obj.get("page_number")
-            manual = obj.get("manual_name") or obj.get("asset_manual", "Manual")
+            page = obj.get("page_number") or obj.get("page")
+            manual = obj.get("manual_name") or obj.get("asset_manual") or obj.get("manual")
+            origin = obj.get("origin") or resolve_origin(obj.get("_REF_ID"))
+            score = obj.get("score")
+            if score is None and obj.get("maxsim_score") is not None:
+                score = obj.get("maxsim_score")
             
-            if page:
-                sources.append({"page": page, "manual": manual})
+            preview_url = obj.get("preview_url") or obj.get("page_image_url")
+            pdf_page_url = obj.get("pdf_page_url")
             
-            # Add content to context - handle both text and visual results
+            # Decide source type and build context text
             content = obj.get("content") or obj.get("interpretation", "")
+            is_visual = bool(
+                obj.get("image_path")
+                or preview_url
+                or obj.get("maxsim_score") is not None
+                or obj.get("score") is not None and not obj.get("content")
+            )
+            source_type = "visual" if is_visual else "text"
+            
+            add_source(manual, page, source_type, score, preview_url, pdf_page_url, origin)
             
             if content:
-                # Text content from FastVectorSearch or VLM interpretation
                 chunk_text = f"[Page {page}, {manual}]: {content}"
-            elif obj.get("maxsim_score") is not None or obj.get("score") is not None:
-                # Visual result from ColQwen - describe what was found
-                maxsim = obj.get("maxsim_score")
-                score = maxsim if maxsim is not None else obj.get("score", 0)
-                # Handle both local path and potential future cloud URL
-                image_ref = obj.get("preview_url") or obj.get("image_path", "")
-                chunk_text = f"[Page {page}, {manual}]: Visual match found (score: {score:.2f}). View page image at: {image_ref}"
+            elif is_visual:
+                score_display = score if score is not None else 0
+                image_ref = preview_url or obj.get("image_path", "")
+                chunk_text = (
+                    f"[Page {page}, {manual}]: Visual match found "
+                    f"(score: {score_display:.2f}). View page image at: {image_ref}"
+                )
             else:
                 continue
             
@@ -310,11 +364,27 @@ Answer:"""
                     for obj in entry.get("objects", []):
                         interp = obj.get("interpretation")
                         page = obj.get("page_number")
+                        manual = obj.get("asset_manual")
+                        origin = obj.get("origin") or resolve_origin(obj.get("_REF_ID"))
                         if interp:
                             chunk_text = f"[Visual interpretation, Page {page}]: {interp}"
                             if total_chars + len(chunk_text) <= max_chars:
                                 context_parts.append(chunk_text)
                                 total_chars += len(chunk_text)
+                        add_source(
+                            manual,
+                            page,
+                            "visual",
+                            obj.get("score"),
+                            obj.get("preview_url"),
+                            obj.get("pdf_page_url"),
+                            origin,
+                        )
+        
+        sources = [
+            {k: v for k, v in src.items() if k != "order"}
+            for src in sorted(sources_map.values(), key=lambda s: s["order"])
+        ]
         
         return "\n\n".join(context_parts), sources
     

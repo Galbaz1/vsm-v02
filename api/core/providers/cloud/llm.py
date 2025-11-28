@@ -10,7 +10,7 @@ Ref: https://github.com/googleapis/python-genai
 
 import logging
 import time
-from typing import AsyncGenerator, List, Dict, Optional
+from typing import AsyncGenerator, List, Dict, Optional, Any
 
 from api.core.config import get_settings
 from api.core.providers.base import LLMProvider, LLMResponse
@@ -185,7 +185,7 @@ class GeminiLLM(LLMProvider):
         )
     
     async def stream_chat(
-        self,
+        self, 
         messages: List[Dict[str, str]],
         **kwargs
     ) -> AsyncGenerator[str, None]:
@@ -195,22 +195,18 @@ class GeminiLLM(LLMProvider):
         GPT-5.1 is more reliable than Gemini which has intermittent empty response issues.
         Falls back to Gemini if OpenAI key not set or GPT-5.1 fails.
         """
-        # Build prompt for GPT-5.1
-        full_prompt = ""
-        for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            full_prompt += f"{role}: {content}\n"
-        
         settings = get_settings()
         
         # Try GPT-5.1 first (more reliable)
         if settings.openai_api_key:
-            gpt_result = await self._gpt51_primary(full_prompt, kwargs)
-            if gpt_result:
-                yield gpt_result
+            emitted = False
+            async for chunk in self._gpt51_responses_stream(messages, kwargs):
+                if chunk:
+                    emitted = True
+                    yield chunk
+            if emitted:
                 return
-            logger.warning("GPT-5.1 failed, falling back to Gemini...")
+            logger.warning("GPT-5.1 Responses API yielded no text, falling back to Gemini...")
         else:
             logger.info("OPENAI_API_KEY not set, using Gemini directly")
         
@@ -235,6 +231,20 @@ class GeminiLLM(LLMProvider):
             max_tokens=kwargs.get("max_tokens", 2048),
         )
         
+        def _yield_text_parts(chunk) -> List[str]:
+            texts: List[str] = []
+            # google-genai streaming chunks often surface text inside candidates/parts, not chunk.text
+            candidate = getattr(chunk, "candidates", [None])[0]
+            if candidate and getattr(candidate, "content", None):
+                for part in candidate.content.parts or []:
+                    text_val = getattr(part, "text", None)
+                    if text_val:
+                        texts.append(text_val)
+            # Fallback to chunk.text if present
+            if getattr(chunk, "text", None):
+                texts.append(chunk.text)
+            return texts
+        
         try:
             response_stream = await self._client.aio.models.generate_content_stream(
                 model=self._model,
@@ -246,9 +256,11 @@ class GeminiLLM(LLMProvider):
             text_yielded = False
             async for chunk in response_stream:
                 chunk_count += 1
-                if chunk.text:
-                    text_yielded = True
-                    yield chunk.text
+                texts = _yield_text_parts(chunk)
+                for t in texts:
+                    if t:
+                        text_yielded = True
+                        yield t
             
             # If we got chunks but none had text, or no chunks at all, raise
             if not text_yielded:
@@ -260,53 +272,130 @@ class GeminiLLM(LLMProvider):
             logger.error(f"Gemini fallback error: {e}")
             raise
     
-    async def _gpt51_primary(
-        self,
-        prompt: str,
-        kwargs: Dict,
-    ) -> Optional[str]:
+    def _messages_to_responses_input(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Primary LLM: GPT-5.1 using OpenAI Responses API.
+        Convert OpenAI-style messages to Responses API input format.
         
-        GPT-5.1 is a thinking model with high reasoning capabilities.
-        More reliable than Gemini (no empty response issues).
+        - user/system -> role:user with input_text
+        - assistant -> role:assistant with output_text
+        """
+        inputs: List[Dict[str, Any]] = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            text = msg.get("content", "")
+            if not text:
+                continue
+            
+            if role == "assistant":
+                inputs.append({
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": text}],
+                })
+            else:
+                # treat system messages as user context
+                inputs.append({
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": text}],
+                })
+        
+        # Fallback to a minimal user message if somehow empty
+        if not inputs:
+            inputs.append({
+                "role": "user",
+                "content": [{"type": "input_text", "text": ""}],
+            })
+        return inputs
+
+    async def _gpt51_responses_stream(
+        self,
+        messages: List[Dict[str, Any]],
+        kwargs: Dict,
+    ) -> AsyncGenerator[Optional[str], None]:
+        """
+        Primary LLM: GPT-5.1 using OpenAI Responses API (streaming).
+        
+        Uses recommended Responses API input format and surfaces only text deltas to avoid
+        Pydantic serialization noise.
+        
+        Note: GPT-5.1 supports temperature/top_p ONLY when reasoning.effort="none".
+        For reasoning tasks, use reasoning.effort="low"|"medium"|"high" without temperature.
+        
+        Ref: https://platform.openai.com/docs/guides/latest-model
         """
         settings = get_settings()
         
         try:
-            from openai import OpenAI
-            import asyncio
+            from openai import AsyncOpenAI
             
-            client = OpenAI(api_key=settings.openai_api_key)
+            client = AsyncOpenAI(api_key=settings.openai_api_key)
+            inputs = self._messages_to_responses_input(messages)
             
-            logger.info(f"GPT-5.1 primary: Using {settings.openai_model}")
+            # Determine reasoning effort - for agentic RAG we want some reasoning
+            # but "high" can be slow. Use "low" for balance of speed + quality.
+            reasoning_effort = kwargs.get("reasoning_effort", "low")
             
-            # GPT-5.1 uses the Responses API with reasoning
-            # Run in thread pool since OpenAI SDK is sync
-            def call_gpt51():
-                try:
-                    # Try Responses API (GPT-5.1)
-                    response = client.responses.create(
-                        model=settings.openai_model,
-                        input=prompt,
-                        reasoning={"effort": "high"},
-                    )
-                    return response.output_text
-                except AttributeError:
-                    # Fall back to Chat Completions if Responses API unavailable
-                    logger.warning("GPT-5.1 Responses API unavailable, using chat completions")
-                    response = client.chat.completions.create(
-                        model="gpt-4o",  # Fallback model
-                        messages=[{"role": "user", "content": prompt}],
-                        max_tokens=kwargs.get("max_tokens", 2048),
-                        temperature=kwargs.get("temperature", 0.7),
-                    )
-                    return response.choices[0].message.content
+            # Build request params
+            request_params = {
+                "model": settings.openai_model,
+                "input": inputs,
+                "max_output_tokens": kwargs.get("max_tokens", 2048),
+                "stream": True,
+            }
             
-            result = await asyncio.to_thread(call_gpt51)
-            logger.info(f"GPT-5.1 primary successful: {len(result)} chars")
-            return result
+            # Only add reasoning if effort is not "none"
+            if reasoning_effort != "none":
+                request_params["reasoning"] = {"effort": reasoning_effort}
+            else:
+                # When reasoning is "none", we can use temperature
+                request_params["temperature"] = kwargs.get("temperature", 0.7)
+            
+            stream = await client.responses.create(**request_params)
+            
+            async for event in stream:
+                if event.type == "response.output_text.delta":
+                    delta = getattr(event, "delta", None)
+                    if delta:
+                        yield delta
+                elif event.type == "response.error":
+                    err_msg = getattr(event, "message", None) or str(event)
+                    logger.error(f"GPT-5.1 stream error: {err_msg}")
+                    break
+                elif event.type == "response.completed":
+                    break
             
         except Exception as e:
-            logger.error(f"GPT-5.1 primary error: {e}")
-            return None
+            logger.error(f"GPT-5.1 Responses API error: {e}")
+            yield None
+
+    async def _gpt51_chat_stream(
+        self,
+        messages: List[Dict[str, Any]],
+        kwargs: Dict,
+    ) -> AsyncGenerator[Optional[str], None]:
+        """
+        Secondary GPT-5.1 path using chat completions streaming (when Responses API rejects params).
+        """
+        settings = get_settings()
+        try:
+            from openai import AsyncOpenAI
+            
+            client = AsyncOpenAI(api_key=settings.openai_api_key)
+            stream = await client.chat.completions.create(
+                model=settings.openai_model,
+                messages=messages,
+                temperature=kwargs.get("temperature", 0.7),
+                max_completion_tokens=kwargs.get("max_tokens", 2048),
+                stream=True,
+            )
+            
+            async for chunk in stream:
+                choice = getattr(chunk, "choices", [None])[0]
+                if choice and getattr(choice, "delta", None):
+                    delta = choice.delta
+                    text = getattr(delta, "content", None)
+                    if text:
+                        yield text
+            
+        except Exception as e:
+            logger.error(f"GPT-5.1 chat completion error: {e}")
+            yield None

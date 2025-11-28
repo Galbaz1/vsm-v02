@@ -105,9 +105,14 @@ class VSMChainOfThought(dspy.Module):
             else:
                 context["environment_summary"] = "(No data retrieved yet)"
             
-            # Tasks completed
+            # Previous queries - CRITICAL for avoiding duplicate searches
+            context["previous_queries"] = self._extract_previous_queries(tree_data)
+            
+            # Tasks completed - shows which tools have been called
             if hasattr(tree_data, "tasks_completed") and tree_data.tasks_completed:
-                context["tasks_completed"] = tree_data.tasks_completed_string
+                context["tasks_completed"] = self._format_tasks_for_decision(tree_data)
+            else:
+                context["tasks_completed"] = "(No tools called yet)"
         
         if atlas is not None:
             # Inject domain knowledge
@@ -116,6 +121,62 @@ class VSMChainOfThought(dspy.Module):
                 context["tool_hints"] = atlas.tool_hints
         
         return context
+    
+    def _extract_previous_queries(self, tree_data: "TreeData") -> str:
+        """Extract all previous search queries from environment and tasks."""
+        queries = set()
+        
+        # Extract from environment metadata
+        if tree_data.environment:
+            for tool_name in tree_data.environment.environment:
+                for result_name in tree_data.environment.environment[tool_name]:
+                    for entry in tree_data.environment.environment[tool_name][result_name]:
+                        metadata = entry.get("metadata", {})
+                        if "query" in metadata:
+                            queries.add(metadata["query"])
+        
+        # Extract from tasks_completed
+        if hasattr(tree_data, "tasks_completed"):
+            for task_prompt in tree_data.tasks_completed:
+                for task in task_prompt.get("task", []):
+                    inputs = task.get("inputs", {})
+                    if isinstance(inputs, dict) and "query" in inputs:
+                        queries.add(inputs["query"])
+        
+        if not queries:
+            return "(No previous queries)"
+        
+        return "\n".join(f"- {q}" for q in sorted(queries))
+    
+    def _format_tasks_for_decision(self, tree_data: "TreeData") -> str:
+        """Format tasks completed for decision context - shows tool usage counts."""
+        if not tree_data.tasks_completed:
+            return "(No tools called yet)"
+        
+        # Count tool calls
+        tool_counts: Dict[str, int] = {}
+        tool_results: Dict[str, str] = {}  # success/error status
+        
+        for task_prompt in tree_data.tasks_completed:
+            for task in task_prompt.get("task", []):
+                tool_name = task.get("task", "unknown")
+                tool_counts[tool_name] = tool_counts.get(tool_name, 0) + 1
+                
+                # Track if it errored
+                if task.get("error"):
+                    tool_results[tool_name] = "ERROR"
+                elif "llm_message" in task:
+                    tool_results[tool_name] = "SUCCESS"
+        
+        lines = ["Tools already called:"]
+        for tool, count in tool_counts.items():
+            status = tool_results.get(tool, "")
+            warning = ""
+            if count >= 2:
+                warning = " ⚠️ STOP calling this tool!"
+            lines.append(f"- {tool}: {count}x {status}{warning}")
+        
+        return "\n".join(lines)
     
     def _format_conversation(self, conversation: list) -> str:
         """Format conversation history as string."""

@@ -82,17 +82,19 @@ export function ResultCard({ hit, query, onPreview }: ResultCardProps) {
               Preview Page
             </Button>
           ) : null}
-          <Button
-            variant="outline"
-            size="sm"
-            asChild
-          >
-            <a href={hit.pdf_page_url} target="_blank" rel="noopener noreferrer">
-              <ExternalLink className="h-4 w-4 mr-2" />
-              Open PDF
-            </a>
-          </Button>
-          {hit.page_number !== null && hit.page_number !== undefined && (
+          {hit.pdf_page_url && (
+            <Button
+              variant="outline"
+              size="sm"
+              asChild
+            >
+              <a href={hit.pdf_page_url} target="_blank" rel="noopener noreferrer">
+                <ExternalLink className="h-4 w-4 mr-2" />
+                Open PDF
+              </a>
+            </Button>
+          )}
+          {hit.page_number !== null && hit.page_number !== undefined && hit.pdf_page_url && (
             <Button
               variant="ghost"
               size="sm"
@@ -108,4 +110,3 @@ export function ResultCard({ hit, query, onPreview }: ResultCardProps) {
     </Card>
   );
 }
-

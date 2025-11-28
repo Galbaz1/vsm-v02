@@ -9,18 +9,18 @@ alwaysApply: true
 
 | Date | Issue | Fix | File |
 |------|-------|-----|------|
-| 2025-11-28 | Multi-turn chat | Added chat endpoint + session memory + frontend chat UI | `api/endpoints/chat.py`, `frontend/app/chat/page.tsx` |
-| 2025-11-28 | Agent infinite loops | Added safety nets: force text_response at iter>=3 w/data, tool repeat limit | `api/services/agent.py` |
-| 2025-11-28 | GPT-5.1 Responses API | Fixed reasoning param (effort: low), removed unsupported temperature | `api/core/providers/cloud/llm.py` |
+| 2025-11-28 | GPT-5.1 Responses API | Fixed reasoning param (effort: low default), removed unsupported temperature | `api/core/providers/cloud/llm.py` |
 | 2025-11-28 | Duplicate search results | Added query dedup + content/page dedup in search tools | `api/services/tools/search_tools.py`, `api/services/environment.py` |
-| 2025-11-28 | Agent query rewriting | DSPy DecisionSignature tracks previous_queries + tasks_completed | `api/prompts/signatures/decision.py`, `api/prompts/chain_of_thought.py` |
+| 2025-11-28 | Agent query rewriting | DSPy DecisionSignature now tracks previous_queries, enforces NEW queries | `api/prompts/signatures/decision.py`, `api/prompts/chain_of_thought.py` |
+| 2025-11-28 | Benchmark capture | Captured model_answer/sources/tools with dedup + typing | `api/services/benchmark.py`, `api/services/tools/base.py` |
+| 2025-11-28 | Agentic UI | Clickable sources, visual thumbnails/scores | `frontend/app/page.tsx`, `frontend/lib/hooks/useAgenticSearch.ts` |
 
 ## Known Issues
 
 | Issue | Location | Impact |
 |-------|----------|--------|
-| Weaviate protobuf issue | `weaviate` package | Lazy imports as workaround |
 | **Benchmark validation pending** | `logs/benchmarks/` | Need fresh run after capture fixes |
+| **Weaviate/protobuf drift** | `weaviate-client` deps | Keep protobuf pinned <6 to avoid grpc issues |
 
 ## Active Migration
 
